@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
 	"github.com/ericjypark/cursor-grok-hackathon/internal/output"
@@ -23,11 +24,14 @@ func Summary(note client.FieldNote, paths output.Paths) string {
 	cols, _ := TermSize()
 	w := Fit(cols)
 
-	head := Gradient(spaced(d.Identity.CanonicalName), true)
 	cat := strings.TrimSpace(deref(d.What.Category))
 	if cat != "" {
 		cat = Muted.Render(cat)
 	}
+	// The wordmark is letter-spaced, so it is twice as wide as the name reads.
+	// Clip it against what the category column leaves, or a long canonical name
+	// wraps the headline and pushes the rule out of alignment.
+	head := Gradient(clip(spaced(d.Identity.CanonicalName), w-lipgloss.Width(cat)-2), true)
 	sb.WriteString("\n  " + Spread(w, head, cat) + "\n")
 	sb.WriteString("  " + Rule(w) + "\n")
 	if tag := strings.TrimSpace(deref(d.Identity.Tagline)); tag != "" {
@@ -56,7 +60,11 @@ func Summary(note client.FieldNote, paths output.Paths) string {
 		Dim.Render(plural(n, "other thing shares this name", "other things share this name"))))
 	if collisions != nil {
 		for _, c := range *collisions {
-			sb.WriteString(rowW(w, "", Accent.Render("›")+" "+Body.Render(c.Name), Dim.Render(c.WhatItIs)))
+			name := Accent.Render("›") + " " + Body.Render(c.Name)
+			// One row per collision. A gloss that half-wraps under the gutter
+			// has no visual subordination, so it reads as another entry.
+			sb.WriteString(rowW(w, "", name,
+				Dim.Render(clip(c.WhatItIs, rightBudget(w, lipgloss.Width(name))))))
 		}
 	}
 
@@ -141,11 +149,24 @@ func harvestBlock(h *client.Harvest, w int) string {
 		ranked = ranked[:topPosts]
 	}
 	for _, p := range ranked {
-		sb.WriteString(rowW(w, "", Accent.Render("\u203a")+" "+Body.Render(headline(p)),
-			Dim.Render(fmt.Sprintf("%s  %d", deref(p.Channel), score(p)))))
+		meta := Dim.Render(fmt.Sprintf("%s  %d", deref(p.Channel), score(p)))
+		// The title's budget is whatever the frame has left once the gutter and
+		// the channel column are spoken for, so a wide terminal shows more of
+		// the title instead of the same fixed span.
+		sb.WriteString(rowW(w, "", Accent.Render("\u203a")+" "+
+			Body.Render(clip(headline(p), rightBudget(w, lipgloss.Width(meta))-2)), meta))
 	}
 	if n := len(posts) - len(ranked); n > 0 {
 		sb.WriteString(row("", Dim.Render(fmt.Sprintf("+ %d more in posts.json", n))))
+	}
+
+	// A fallback run substituted recorded signals about a different product. A
+	// dim word at the right edge is not enough to stop a reader taking these
+	// for their own users, so the source note gets a warning of its own.
+	if !h.Live {
+		if n := strings.Join(strings.Fields(h.SourceNote), " "); n != "" {
+			sb.WriteString("\n  " + Warn.Render("\u25b2 "+clip(n, w-2)) + "\n")
+		}
 	}
 	return sb.String()
 }
@@ -168,10 +189,27 @@ func headline(p client.Post) string {
 	if text == "" {
 		return p.Url
 	}
-	if len(text) > 58 {
-		text = strings.TrimSpace(text[:57]) + "\u2026"
-	}
 	return text
+}
+
+// clip trims text to a display-width budget. Everything else in this file
+// measures in terminal cells, and so must this: a byte-length cut stops a
+// Korean title a third of the way in and can split a rune in half.
+func clip(text string, budget int) string {
+	if budget < 4 {
+		budget = 4
+	}
+	if lipgloss.Width(text) <= budget {
+		return text
+	}
+	return strings.TrimRight(ansi.Truncate(text, budget-1, ""), " ") + "\u2026"
+}
+
+// rightBudget is the room a two-column row leaves its second column once the
+// gutter and the first column are spoken for \u2014 the same arithmetic rowW uses
+// to decide whether the two fit, so a value clipped to it always does.
+func rightBudget(width, leftW int) int {
+	return width - keyCol - leftW - 2
 }
 
 // rowW is row with a right-hand column pinned to the frame's right edge. When
@@ -182,7 +220,9 @@ func rowW(width int, key, value, right string) string {
 	if right == "" {
 		return line + "\n"
 	}
-	if lipgloss.Width(line)+lipgloss.Width(right)+2 > width {
+	// line carries the two-space rail that sits outside the frame, so it is
+	// measured against width+2 — the same span the fitting branch spreads over.
+	if lipgloss.Width(line)+lipgloss.Width(right)+2 > width+2 {
 		return line + "\n" + row("", right)
 	}
 	return Spread(width+2, line, right) + "\n"
