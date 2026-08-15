@@ -91,11 +91,12 @@ func TestFitStaysInsideTheWindow(t *testing.T) {
 		if got > cols && cols > 0 {
 			t.Errorf("Fit(%d) = %d, wider than the window", cols, got)
 		}
-		if got > maxWidth {
-			t.Errorf("Fit(%d) = %d, above the cap", cols, got)
-		}
 		if got < 1 {
 			t.Errorf("Fit(%d) = %d, want at least 1", cols, got)
+		}
+		// Room for the rail on both sides, or the frame overflows the window.
+		if cols >= 2*margin+1 && got > cols-2*margin {
+			t.Errorf("Fit(%d) = %d, leaves no rail", cols, got)
 		}
 	}
 }
@@ -112,7 +113,7 @@ func TestSpreadFillsExactlyTheWidth(t *testing.T) {
 }
 
 func TestBannerSpansTheFrameAtEveryWidth(t *testing.T) {
-	for _, w := range []int{minWidth, 60, 80, maxWidth} {
+	for _, w := range []int{40, 60, 80, 200} {
 		for i, ln := range strings.Split(Banner(w), "\n") {
 			if got := lipgloss.Width(ln); got != w {
 				t.Errorf("Banner(%d) line %d is %d wide", w, i, got)

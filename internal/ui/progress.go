@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
 )
@@ -202,36 +203,63 @@ func wave(frame int) float64 {
 }
 
 func (m model) View() string {
-	var sb strings.Builder
-	sb.WriteString(Banner(m.width) + "\n\n")
+	head := Banner(m.width)
 
 	done := 0
+	rows := make([]string, 0, len(m.stages))
 	for _, s := range m.stages {
 		if s.status == "done" {
 			done++
 		}
-		sb.WriteString(" " + m.stageLine(s, m.width-2) + "\n")
+		rows = append(rows, " "+m.stageLine(s, m.width-2))
 	}
 
-	sb.WriteString("\n" + Rule(m.width) + "\n")
-
+	var foot strings.Builder
+	foot.WriteString(Rule(m.width) + "\n")
 	bar := Meter(meterWidth(m.width), float64(done)/float64(len(m.stages)))
 	status := " " + bar +
 		"  " + Title.Render(fmt.Sprintf("%d", done)) + Dim.Render(fmt.Sprintf("/%d", len(m.stages))) +
 		"  " + Dim.Render(clock(time.Since(m.startAt)))
-	sb.WriteString(Spread(m.width, status, Dim.Render("q")+" "+Dim.Render("cancel")))
-
+	foot.WriteString(Spread(m.width, status, Dim.Render("q")+" "+Dim.Render("cancel")))
 	for _, w := range m.warnings {
-		sb.WriteString("\n " + Warn.Render("▲ "+w))
+		foot.WriteString("\n " + Warn.Render("▲ "+w))
 	}
 	if m.fatal != nil {
-		sb.WriteString("\n " + Bad.Render("✗ "+m.fatal.Error()))
+		foot.WriteString("\n " + Bad.Render("✗ "+m.fatal.Error()))
 	}
 
-	// Fixing the panel to its own width first keeps every line left-aligned
-	// inside it; Place then centres the panel as a block on the alt screen.
-	panel := lipgloss.NewStyle().Width(m.width).Render(sb.String())
-	return lipgloss.Place(m.cols, m.rows, lipgloss.Center, lipgloss.Center, panel)
+	// Vertical layout: header on the top rail, footer on the bottom one, the
+	// stage list floating in the space between them. A tall window spends its
+	// slack double-spacing the list before it opens gaps around it.
+	headH, footH := lipgloss.Height(head), lipgloss.Height(foot.String())
+	sep, listH := "\n", len(rows)
+	if m.rows-headH-listH-footH >= listH {
+		sep, listH = "\n\n", 2*len(rows)-1
+	}
+
+	// free is the blank-line budget; splitting it above and below the list
+	// makes the header and footer land on the window's own first and last row.
+	above, below := 0, 0
+	if free := m.rows - headH - listH - footH; free > 0 {
+		above, below = free/2, free-free/2
+	}
+
+	body := head +
+		strings.Repeat("\n", above+1) + strings.Join(rows, sep) +
+		strings.Repeat("\n", below+1) + foot.String()
+	return rail(body, m.width)
+}
+
+// rail insets every line by the side margin and clips it to the frame. The
+// clip is the last line of defence: on a window too small for its own content
+// a wrapped line would shift every row below it and tear the frame apart.
+func rail(block string, width int) string {
+	pad := strings.Repeat(" ", margin)
+	lines := strings.Split(block, "\n")
+	for i := range lines {
+		lines[i] = pad + ansi.Truncate(lines[i], width, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // stageLine draws one row: status glyph, label, then a trailing column that is

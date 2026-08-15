@@ -14,27 +14,16 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// Layout. The CLI claims the whole terminal: every surface is drawn at the
-// window's own width, clamped only so a very narrow pane still lays out and a
-// very wide one does not stretch a seven-row list across a wall.
-const (
-	minWidth = 44
-	maxWidth = 120
-	margin   = 2
-)
+// Layout. The CLI claims the whole terminal: every surface spans the window's
+// own width less a margin rail on each side. Nothing is capped — a wide window
+// gets a wide frame, which is the point.
+const margin = 2
 
-// Fit turns a raw terminal width into the frame width surfaces draw at.
+// Fit turns a raw terminal width into the frame width surfaces draw at. There
+// is no floor: a frame wider than its window wraps every line it draws, which
+// is worse at any size than a cramped one.
 func Fit(cols int) int {
-	w := cols - 2*margin
-	if w > maxWidth {
-		w = maxWidth
-	}
-	// The floor never overshoots the window itself: on a pane narrower than
-	// minWidth, drawing wider would wrap every line.
-	if w < minWidth {
-		w = min(minWidth, max(cols, 1))
-	}
-	return w
+	return max(cols-2*margin, 1)
 }
 
 // TermSize reports the terminal geometry for surfaces drawn outside bubbletea,
