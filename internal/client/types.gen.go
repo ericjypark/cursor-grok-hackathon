@@ -9,6 +9,8 @@ import (
 
 // Defines values for ErrorEventStage.
 const (
+	ErrorEventStageBuildReport      ErrorEventStage = "build_report"
+	ErrorEventStageExtractIssues    ErrorEventStage = "extract_issues"
 	ErrorEventStageFindSimilar      ErrorEventStage = "find_similar"
 	ErrorEventStageMap              ErrorEventStage = "map"
 	ErrorEventStageMapPosts         ErrorEventStage = "map_posts"
@@ -25,6 +27,10 @@ const (
 // Valid indicates whether the value is a known member of the ErrorEventStage enum.
 func (e ErrorEventStage) Valid() bool {
 	switch e {
+	case ErrorEventStageBuildReport:
+		return true
+	case ErrorEventStageExtractIssues:
+		return true
 	case ErrorEventStageFindSimilar:
 		return true
 	case ErrorEventStageMap:
@@ -99,6 +105,8 @@ func (e SourceVia) Valid() bool {
 
 // Defines values for StageEventStage.
 const (
+	StageEventStageBuildReport      StageEventStage = "build_report"
+	StageEventStageExtractIssues    StageEventStage = "extract_issues"
 	StageEventStageFindSimilar      StageEventStage = "find_similar"
 	StageEventStageMap              StageEventStage = "map"
 	StageEventStageMapPosts         StageEventStage = "map_posts"
@@ -115,6 +123,10 @@ const (
 // Valid indicates whether the value is a known member of the StageEventStage enum.
 func (e StageEventStage) Valid() bool {
 	switch e {
+	case StageEventStageBuildReport:
+		return true
+	case StageEventStageExtractIssues:
+		return true
 	case StageEventStageFindSimilar:
 		return true
 	case StageEventStageMap:
@@ -190,10 +202,11 @@ type ErrorEvent struct {
 // ErrorEventStage defines model for ErrorEvent.Stage.
 type ErrorEventStage string
 
-// FieldNote Everything the run produced. Grows a field per stage as T2-T5 land.
+// FieldNote Everything the run produced. Grows a field per stage as T3-T5 land.
 type FieldNote struct {
-	Dossier ProductDossier `json:"dossier"`
-	Harvest *Harvest       `json:"harvest,omitempty"`
+	Dossier ProductDossier          `json:"dossier"`
+	Harvest *Harvest                `json:"harvest,omitempty"`
+	Report  *map[string]interface{} `json:"report,omitempty"`
 }
 
 // HackerNewsTargets defines model for HackerNewsTargets.
@@ -329,7 +342,7 @@ type RedditTargets struct {
 type ResultEvent struct {
 	Event *string `json:"event,omitempty"`
 
-	// Note Everything the run produced. Grows a field per stage as T2-T5 land.
+	// Note Everything the run produced. Grows a field per stage as T3-T5 land.
 	Note FieldNote `json:"note"`
 }
 

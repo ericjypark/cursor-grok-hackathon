@@ -13,9 +13,11 @@ import (
 	"time"
 )
 
-// Request mirrors the backend's PreprocessRequest. Only Website is required.
+// Request mirrors the backend's PreprocessRequest. The backend needs a
+// Website or a Repo; the CLI requires the Repo and treats the Website as
+// optional, so a blank one is left out rather than sent as "".
 type Request struct {
-	Website string `json:"website"`
+	Website string `json:"website,omitempty"`
 	Name    string `json:"name,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	Form    string `json:"form,omitempty"`

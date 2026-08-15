@@ -157,6 +157,17 @@ func TestStreamDeliversServerEvents(t *testing.T) {
 	}
 }
 
+func TestRequestOmitsABlankWebsite(t *testing.T) {
+	// The repo alone is a valid run; a website key with an empty string is not.
+	body, err := json.Marshal(Request{Repo: "acme/acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "website") {
+		t.Errorf("blank website was sent: %s", body)
+	}
+}
+
 func TestStreamSurfacesNonOKStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"detail":"missing required env var(s): EXA_API_KEY"}`, http.StatusServiceUnavailable)
