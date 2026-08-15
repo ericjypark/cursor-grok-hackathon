@@ -16,16 +16,67 @@ BACKEND_REPO="${FIELDNOTE_BACKEND_REPO:-in-sol-ence/field-note-backend}"
 PORT="${FIELDNOTE_PORT:-8000}"
 BASE="http://127.0.0.1:${PORT}"
 
-bold=$'\033[1m'; dim=$'\033[2m'; red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; off=$'\033[0m'
-step() { printf '%s==>%s %s\n' "$bold" "$off" "$1"; }
+# ---- house style ---------------------------------------------------------
+# The launcher wears the same violet-to-cyan ramp as the CLI it starts. Color
+# is dropped entirely when stdout is not a terminal, and the per-character
+# gradient is dropped when the terminal cannot do 24-bit color.
+[ -t 1 ] && COLOR=1 || COLOR=0
+case "${COLORTERM:-}" in truecolor|24bit) TRUECOLOR=1 ;; *) TRUECOLOR=0 ;; esac
+
+off=''; bold=''; dim=''; body=''; violet=''; cyan=''; red=''; yellow=''
+if [ "$COLOR" -eq 1 ]; then
+  off=$'\033[0m'; bold=$'\033[1m'
+  dim=$'\033[38;2;113;113;121m'; body=$'\033[38;2;211;211;216m'
+  violet=$'\033[38;2;124;92;255m'; cyan=$'\033[38;2;34;211;238m'
+  red=$'\033[38;2;251;113;133m'; yellow=$'\033[38;2;251;191;36m'
+fi
+
+# ramp emits the escape for step $1 of $2 along violet -> cyan.
+ramp() {
+  local t=$(( $2 > 1 ? $1 * 1000 / ($2 - 1) : 0 ))
+  printf '\033[38;2;%d;%d;%dm' \
+    $((167 + (34 - 167) * t / 1000)) \
+    $((139 + (211 - 139) * t / 1000)) \
+    $((250 + (238 - 250) * t / 1000))
+}
+
+# paint spreads the ramp across an ASCII string, one step per character.
+paint() {
+  local s=$1 n=${#1} i out=''
+  if [ "$COLOR" -eq 0 ]; then printf '%s' "$s"; return; fi
+  if [ "$TRUECOLOR" -eq 0 ] || [ "$n" -le 1 ]; then printf '%s%s%s' "$violet" "$s" "$off"; return; fi
+  for ((i = 0; i < n; i++)); do out+="$(ramp "$i" "$n")${s:i:1}"; done
+  printf '%s%s' "$out" "$off"
+}
+
+# rule draws the gradient divider, matching the CLI's 60-column frame.
+rule() {
+  local i out=''
+  # Literal box-drawing characters, not \u escapes: bash 3.2 (the macOS
+  # default) prints those verbatim rather than expanding them.
+  if [ "$COLOR" -eq 0 ]; then printf '%60s' '' | tr ' ' '-'; return; fi
+  if [ "$TRUECOLOR" -eq 0 ]; then printf '%s' "$violet"; for ((i = 0; i < 60; i++)); do out+='─'; done
+  else for ((i = 0; i < 60; i++)); do out+="$(ramp "$i" 60)─"; done; fi
+  printf '%s%s' "$out" "$off"
+}
+
+banner() {
+  printf '\n  %s%s%s  %s%s%s  %s· booting the stack%s\n' \
+    "$violet" '◆' "$off" "$bold" "$(paint 'fieldnote')" "$off" "$dim" "$off"
+  printf '  %s\n\n' "$(rule)"
+}
+
+step() { printf '  %s%s%s %s%s%s\n' "$violet" '▸' "$off" "$body" "$1" "$off"; }
 info() { printf '    %s%s%s\n' "$dim" "$1" "$off"; }
-die()  { printf '%s error:%s %s\n' "$red" "$off" "$1" >&2; exit 1; }
+die()  { printf '\n  %s%s %s%s\n\n' "$red" '✗' "$1" "$off" >&2; exit 1; }
 
 DEMO=0
 CLI_ARGS=()
 for arg in "$@"; do
   if [ "$arg" = "--demo" ]; then DEMO=1; else CLI_ARGS+=("$arg"); fi
 done
+
+banner
 
 # ---- prerequisites -------------------------------------------------------
 for tool in uv go curl; do
@@ -57,9 +108,9 @@ if [ "$DEMO" -eq 0 ]; then
     have_key "$key" || missing+=("$key")
   done
   if [ ${#missing[@]} -gt 0 ]; then
-    printf '%s error:%s missing %s\n\n' "$red" "$off" "${missing[*]}" >&2
-    printf '  Add them to %s/.env  %s(cp .env.example .env)%s\n' "$BACKEND_DIR" "$dim" "$off" >&2
-    printf '  Or run without keys:  %s./run.sh --demo%s\n\n' "$bold" "$off" >&2
+    printf '\n  %s%s missing %s%s\n\n' "$red" '✗' "${missing[*]}" "$off" >&2
+    printf '    %sAdd them to%s %s/.env  %s(cp .env.example .env)%s\n' "$dim" "$off" "$BACKEND_DIR" "$dim" "$off" >&2
+    printf '    %sOr run without keys:%s %s./run.sh --demo%s\n\n' "$dim" "$off" "$bold" "$off" >&2
     exit 1
   fi
 fi
@@ -68,7 +119,8 @@ fi
 APP="main:app"
 if [ "$DEMO" -eq 1 ]; then
   APP="demo_server:app"
-  printf '%s  demo mode: canned dossier, no APIs called%s\n' "$yellow" "$off"
+  printf '  %s▲ demo mode%s %s· canned dossier, no APIs called%s\n' \
+    "$yellow" "$off" "$dim" "$off"
 fi
 
 STARTED_SERVER=0
@@ -110,8 +162,7 @@ fi
 step "Building the CLI"
 (cd "$HERE" && go build -o "$HERE/fieldnote" ./cmd/fieldnote) || die "go build failed"
 
-step "Running T0"
-echo
+printf '  %s\n' "$(rule)"
 set +e
 "$HERE/fieldnote" --backend "$BASE" "${CLI_ARGS[@]}"
 STATUS=$?

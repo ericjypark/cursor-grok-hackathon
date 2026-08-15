@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,16 +15,18 @@ import (
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
 )
 
-var (
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	doneStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	titleStyle = lipgloss.NewStyle().Bold(true)
+// Layout constants. labelCol keeps every stage's trailing column aligned no
+// matter which label is longest.
+const (
+	frameWidth = 60
+	labelCol   = 26
+	barWidth   = 14
 )
 
 type stage struct {
 	key, label, detail, status string
+	startedAt                  time.Time
+	elapsed                    time.Duration
 }
 
 // Display order, which is also roughly execution order.
@@ -48,19 +51,27 @@ type model struct {
 	warnings []string
 	fatal    error
 	quitting bool
+
+	frame   int
+	startAt time.Time
+	width   int
 }
 
 func newModel(events <-chan client.Event) model {
 	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	// Frames without the trailing space bubbles ships on Dot, so a running row
+	// occupies exactly the same width as a settled one and nothing jitters.
+	s.Spinner = spinner.Spinner{
+		Frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		FPS:    time.Second / 12,
+	}
 
 	stages := make([]stage, len(stageOrder))
 	copy(stages, stageOrder)
 	for i := range stages {
 		stages[i].status = "pending"
 	}
-	return model{stages: stages, spin: s, events: events}
+	return model{stages: stages, spin: s, events: events, startAt: time.Now(), width: frameWidth}
 }
 
 func waitFor(ch <-chan client.Event) tea.Cmd {
@@ -79,18 +90,29 @@ func (m model) Init() tea.Cmd {
 
 func (m *model) set(key, status, detail string) {
 	for i := range m.stages {
-		if m.stages[i].key == key {
-			m.stages[i].status = status
-			if detail != "" {
-				m.stages[i].detail = detail
-			}
-			return
+		if m.stages[i].key != key {
+			continue
 		}
+		s := &m.stages[i]
+		switch {
+		case status == "running" && s.startedAt.IsZero():
+			s.startedAt = time.Now()
+		case status != "running" && !s.startedAt.IsZero() && s.elapsed == 0:
+			s.elapsed = time.Since(s.startedAt)
+		}
+		s.status = status
+		if detail != "" {
+			s.detail = detail
+		}
+		return
 	}
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = min(frameWidth, max(32, msg.Width-4))
+		return m, nil
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC || msg.String() == "q" {
 			m.quitting = true
@@ -98,6 +120,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case spinner.TickMsg:
+		m.frame++
+		// Cycling the spinner's own color along the ramp is what gives the
+		// active row its glow.
+		m.spin.Style = lipgloss.NewStyle().Foreground(RampAt(wave(m.frame)))
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
@@ -143,36 +169,99 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// wave maps a frame counter onto a 0..1..0 triangle, so ramp-sampled colors
+// breathe rather than jumping at the loop point.
+func wave(frame int) float64 {
+	const period = 40
+	p := frame % period
+	if p >= period/2 {
+		p = period - p
+	}
+	return float64(p) / float64(period/2)
+}
+
 func (m model) View() string {
 	var sb strings.Builder
-	sb.WriteString(titleStyle.Render("Understanding the product") + "\n\n")
+	sb.WriteString("\n" + indent(Banner(m.width)) + "\n\n")
 
+	done := 0
 	for _, s := range m.stages {
-		var icon, label string
-		switch s.status {
-		case "done":
-			icon, label = doneStyle.Render("✓"), s.label
-		case "running":
-			icon, label = m.spin.View(), s.label
-		case "failed":
-			icon, label = warnStyle.Render("!"), s.label
-		default:
-			icon, label = dimStyle.Render("·"), dimStyle.Render(s.label)
+		if s.status == "done" {
+			done++
 		}
-		line := fmt.Sprintf("  %s %s", icon, label)
-		if s.detail != "" && s.status != "pending" {
-			line += dimStyle.Render("  " + s.detail)
-		}
-		sb.WriteString(line + "\n")
+		sb.WriteString("   " + m.stageLine(s) + "\n")
 	}
+
+	sb.WriteString("\n  " + Rule(m.width) + "\n")
+	sb.WriteString("   " + Meter(barWidth, float64(done)/float64(len(m.stages))))
+	sb.WriteString("  " + Muted.Render(fmt.Sprintf("%d/%d", done, len(m.stages))))
+	sb.WriteString("  " + Dim.Render(clock(time.Since(m.startAt))) + "\n")
 
 	for _, w := range m.warnings {
-		sb.WriteString(warnStyle.Render("  ! "+w) + "\n")
+		sb.WriteString("\n   " + Warn.Render("▲ "+w))
 	}
 	if m.fatal != nil {
-		sb.WriteString("\n" + errStyle.Render("  ✗ "+m.fatal.Error()) + "\n")
+		sb.WriteString("\n   " + Bad.Render("✗ "+m.fatal.Error()) + "\n")
 	}
 	return sb.String() + "\n"
+}
+
+// stageLine draws one row: status glyph, label, then a trailing column that is
+// a live pulse while running and a timing/detail readout once settled.
+func (m model) stageLine(s stage) string {
+	var icon, label, trail string
+	switch s.status {
+	case "done":
+		icon, label = Good.Render("✔"), Body.Render(s.label)
+		trail = Dim.Render(dur(s.elapsed))
+		if s.detail != "" {
+			trail += "  " + Muted.Render(s.detail)
+		}
+	case "running":
+		icon, label = m.spin.View(), Title.Render(s.label)
+		if s.detail != "" {
+			trail = Muted.Render(s.detail)
+		} else {
+			trail = Pulse(barWidth, m.frame)
+		}
+	case "failed":
+		icon, label = Warn.Render("▲"), Body.Render(s.label)
+		trail = Warn.Render("degraded")
+	default:
+		icon, label = Dim.Render("·"), Dim.Render(s.label)
+	}
+
+	line := icon + "  " + label
+	if trail == "" {
+		return line
+	}
+	pad := labelCol - lipgloss.Width(s.label)
+	if pad < 1 {
+		pad = 1
+	}
+	return line + strings.Repeat(" ", pad) + trail
+}
+
+func indent(block string) string {
+	lines := strings.Split(block, "\n")
+	for i := range lines {
+		lines[i] = "  " + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func dur(d time.Duration) string {
+	if d == 0 {
+		return ""
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func clock(d time.Duration) string {
+	return fmt.Sprintf("%02d:%02d", int(d.Minutes()), int(d.Seconds())%60)
 }
 
 // Run drives the progress display until the stream ends, returning the dossier.

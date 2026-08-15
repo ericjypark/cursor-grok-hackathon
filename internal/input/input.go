@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
+	"github.com/ericjypark/cursor-grok-hackathon/internal/ui"
 )
 
 var (
@@ -114,7 +115,8 @@ func Collect(req client.Request) (client.Request, error) {
 	}
 
 	if len(fields) > 0 {
-		if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
+		fmt.Println(ui.FormHeader())
+		if err := huh.NewForm(huh.NewGroup(fields...)).WithTheme(ui.FormTheme()).Run(); err != nil {
 			return req, err
 		}
 	}

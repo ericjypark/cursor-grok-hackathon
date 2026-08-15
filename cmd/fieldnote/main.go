@@ -12,25 +12,15 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
 	"github.com/ericjypark/cursor-grok-hackathon/internal/input"
 	"github.com/ericjypark/cursor-grok-hackathon/internal/output"
-	"github.com/ericjypark/cursor-grok-hackathon/internal/render"
 	"github.com/ericjypark/cursor-grok-hackathon/internal/ui"
-)
-
-var (
-	bold = lipgloss.NewStyle().Bold(true)
-	dim  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	warn = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	good = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 )
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render("error: "+err.Error()))
+		fmt.Fprintln(os.Stderr, "\n  "+ui.Bad.Render("✗ "+err.Error())+"\n")
 		os.Exit(1)
 	}
 }
@@ -103,7 +93,7 @@ func run() error {
 		fmt.Println(string(blob))
 		return nil
 	}
-	printSummary(dossier, jsonPath, mdPath)
+	fmt.Print(ui.Summary(dossier, jsonPath, mdPath))
 	return nil
 }
 
@@ -143,36 +133,6 @@ func consumeQuietly(events <-chan client.Event) (client.ProductDossier, error) {
 		return dossier, fmt.Errorf("backend closed the stream without returning a dossier")
 	}
 	return dossier, nil
-}
-
-func printSummary(d client.ProductDossier, jsonPath, mdPath string) {
-	score := d.Disambiguation.AmbiguityScore
-	collisions := 0
-	if d.Disambiguation.NameCollisions != nil {
-		collisions = len(*d.Disambiguation.NameCollisions)
-	}
-
-	fmt.Println(bold.Render(d.Identity.CanonicalName) + dim.Render("  "+deref(d.What.Category)))
-	fmt.Printf("\n  %s %.2f  %s\n", bold.Render("Ambiguity"), score, dim.Render(render.AmbiguityVerdict(score)))
-
-	style := good
-	if score >= 0.4 {
-		style = warn
-	}
-	fmt.Printf("  %s\n", style.Render(fmt.Sprintf("%d other thing(s) sharing this name were observed", collisions)))
-
-	if d.Disambiguation.NameCollisions != nil {
-		for _, c := range *d.Disambiguation.NameCollisions {
-			fmt.Printf("    %s %s %s\n", dim.Render("–"), c.Name, dim.Render(c.WhatItIs))
-		}
-	}
-	if d.Vocabulary.FeatureJargon != nil && len(*d.Vocabulary.FeatureJargon) > 0 {
-		fmt.Printf("\n  %s %s\n", bold.Render("Distinctive terms"), dim.Render(strings.Join(*d.Vocabulary.FeatureJargon, ", ")))
-	}
-	if d.Provenance.DegradedSources != nil && len(*d.Provenance.DegradedSources) > 0 {
-		fmt.Printf("\n  %s\n", warn.Render(fmt.Sprintf("%d source(s) degraded or dropped — see product.md", len(*d.Provenance.DegradedSources))))
-	}
-	fmt.Printf("\n  %s\n  %s\n\n", dim.Render(mdPath), dim.Render(jsonPath))
 }
 
 // isTTY reports whether stdout is a terminal rather than a pipe or file.
