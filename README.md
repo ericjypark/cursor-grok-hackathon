@@ -1,16 +1,16 @@
 # fieldnote
 
-CLI frontend for **T0 — product understanding**, the first stage of the
-field-note pipeline.
+CLI frontend for the field-note pipeline: **T0 — product understanding** and
+**T1 — finding where users complain**.
 
 You give it a product website (plus, optionally, a GitHub repo and a free-text
 description). It calls the [field-note backend](https://github.com/in-sol-ence/field-note-backend),
-streams live progress, and writes a dossier.
+streams live progress, and writes a dossier plus the discussions it scraped.
 
-## Why this stage exists
+## Why T0 exists
 
-T1 and T2 search Reddit, X and GitHub for real users discussing a product.
-Their fatal failure mode is the namesake problem: search *Linear* and you get
+T1 searches Reddit and HackerNews for real users discussing a product. Its
+fatal failure mode is the namesake problem: search *Linear* and you get
 linear algebra; search *Cursor* and you get database cursors.
 
 So the dossier's real payload isn't the description — it's the **discriminator**:
@@ -24,6 +24,21 @@ Name collisions are observed, never recalled. The backend searches the bare
 product name with no category context, partitions the results by domain, and
 the leftovers are the collision set — so a collision that can't be traced to a
 page we actually fetched gets dropped before it reaches you.
+
+## What T1 does with it
+
+The dossier is not the deliverable, it's the aim. T1 turns it into concrete
+subreddits and search queries — spending the collisions, the negative signals
+and the no-namesake jargon — then scrapes them and returns the discussions as
+normalized posts.
+
+The scrape runs through the social-signals service, which needs a live browser
+session and takes 3-5 minutes for Reddit. When it is not reachable, the run
+falls back to recorded signals and **says so**: the summary marks the posts
+`recorded` instead of `live`. Those recordings are about Perplexity, so a
+fallback run proves the plumbing — it does not tell you about your users.
+
+Skip the scrape entirely with `--no-scrape`.
 
 ## Quick start
 
@@ -41,8 +56,9 @@ Bare, to be prompted for each input:
 ```
 
 Without API keys, use the canned dossier — real server, real CLI, real SSE, no
-APIs called. Also worth using to rehearse a demo rather than betting it on
-three external services staying up:
+APIs called. T1 still runs for real against it, so this exercises the whole
+scrape-then-fall-back path. Also worth using to rehearse a demo rather than
+betting it on three external services staying up:
 
 ```bash
 ./run.sh --demo --url https://cursor.com
@@ -52,7 +68,10 @@ three external services staying up:
 other flag is forwarded to the CLI untouched.
 
 Override the defaults with `FIELDNOTE_BACKEND_DIR` (defaults to a sibling
-`field-note-backend`) and `FIELDNOTE_PORT` (defaults to 8000).
+`field-note-backend`), `FIELDNOTE_PORT` (defaults to 8000) and
+`FIELDNOTE_SCRAPER` (defaults to `http://127.0.0.1:8899`). `run.sh` probes the
+scraper before it starts and tells you which mode T1 will be in, rather than
+letting you find out halfway through a demo.
 
 ## Running the pieces by hand
 
@@ -73,13 +92,16 @@ With the backend already up (see its README):
 | `--repo` | `owner/repo` or a full GitHub URL. Optional. |
 | `--details` | Free-text description. Optional, but the most precise disambiguation signal available. |
 | `--backend` | Backend base URL. Defaults to `$FIELDNOTE_BACKEND` or `http://127.0.0.1:8000`. |
-| `--json` | Print the dossier to stdout and skip the interactive UI. |
+| `--json` | Print the results to stdout and skip the interactive UI. |
 | `--out` | Output directory. Defaults to `out`. |
+| `--no-scrape` | Stop after T0. Builds the dossier, skips T1 entirely. |
 
 Output lands in `out/<slug>/`:
 
-- `product.json` — the schema T1/T2 consume
+- `product.json` — the dossier, which is T1's input
 - `product.md` — the same data for a human to sanity-check before spending scrape budget
+- `posts.json` — the targets T1 chose and the discussions it scraped, which is
+  T2's input. Absent on a `--no-scrape` run.
 
 Piped or redirected output automatically drops the animated UI, so
 `./fieldnote --url acme.dev > run.log` behaves.

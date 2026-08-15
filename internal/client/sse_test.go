@@ -82,17 +82,53 @@ func TestParseHandlesPayloadsLargerThanTheDefaultScannerBuffer(t *testing.T) {
 	}
 }
 
-func TestEventDecodersMapOntoGeneratedTypes(t *testing.T) {
-	ev := Event{Kind: "result", Data: []byte(`{"dossier":{"identity":{"canonical_name":"Acme","slug":"acme"},
+const dossierJSON = `{"identity":{"canonical_name":"Acme","slug":"acme"},
 	"what":{},"vocabulary":{},"disambiguation":{"ambiguity_score":0.5},
-	"provenance":{"generated_at":"2026-08-15T00:00:00Z","runtime_ms":12}}}`)}
+	"provenance":{"generated_at":"2026-08-15T00:00:00Z","runtime_ms":12}}`
 
-	d, err := ev.Result()
+func TestEventDecodersMapOntoGeneratedTypes(t *testing.T) {
+	ev := Event{Kind: "result", Data: []byte(`{"note":{"dossier":` + dossierJSON + `}}`)}
+
+	n, err := ev.Result()
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
-	if d.Identity.CanonicalName != "Acme" || d.Disambiguation.AmbiguityScore != 0.5 {
+	if n.Dossier.Identity.CanonicalName != "Acme" || n.Dossier.Disambiguation.AmbiguityScore != 0.5 {
+		t.Errorf("decoded wrong: %+v", n.Dossier.Identity)
+	}
+	if n.Harvest != nil {
+		t.Errorf("a t0-only run should carry no harvest, got %+v", n.Harvest)
+	}
+}
+
+// T0 publishes its dossier before T1 starts, so the CLI has something to show
+// during the minutes the scrape takes.
+func TestDossierEventDecodesOnItsOwn(t *testing.T) {
+	ev := Event{Kind: "dossier", Data: []byte(`{"dossier":` + dossierJSON + `}`)}
+
+	d, err := ev.Dossier()
+	if err != nil {
+		t.Fatalf("Dossier: %v", err)
+	}
+	if d.Identity.CanonicalName != "Acme" {
 		t.Errorf("decoded wrong: %+v", d.Identity)
+	}
+}
+
+func TestHarvestEventReportsWhetherThePostsAreLive(t *testing.T) {
+	ev := Event{Kind: "harvest", Data: []byte(`{"harvest":{"targets":{},"live":false,
+	"source_note":"recorded signals","posts":[{"id":"post_rd_1","source":"reddit",
+	"url":"https://reddit.com/r/x/comments/1/","score":412}]}}`)}
+
+	h, err := ev.Harvest()
+	if err != nil {
+		t.Fatalf("Harvest: %v", err)
+	}
+	if h.Live {
+		t.Error("a fallback harvest must not claim to be live")
+	}
+	if h.Posts == nil || len(*h.Posts) != 1 || (*h.Posts)[0].Source != "reddit" {
+		t.Errorf("posts decoded wrong: %+v", h.Posts)
 	}
 }
 

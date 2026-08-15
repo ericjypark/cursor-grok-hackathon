@@ -2,11 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
+	"github.com/ericjypark/cursor-grok-hackathon/internal/output"
 	"github.com/ericjypark/cursor-grok-hackathon/internal/render"
 )
 
@@ -14,8 +16,9 @@ import (
 const keyCol = 12
 
 // Summary renders the post-run readout: the headline, the disambiguation
-// verdict, and where the artifacts landed.
-func Summary(d client.ProductDossier, jsonPath, mdPath string) string {
+// verdict, what the scrape found, and where the artifacts landed.
+func Summary(note client.FieldNote, paths output.Paths) string {
+	d := note.Dossier
 	var sb strings.Builder
 	cols, _ := TermSize()
 	w := Fit(cols)
@@ -67,6 +70,8 @@ func Summary(d client.ProductDossier, jsonPath, mdPath string) string {
 		sb.WriteString("\n" + row("TERMS", strings.Join(parts, Dim.Render(", "))))
 	}
 
+	sb.WriteString(harvestBlock(note.Harvest, w))
+
 	if deg := d.Provenance.DegradedSources; deg != nil && len(*deg) > 0 {
 		sb.WriteString("\n  " + Warn.Render(fmt.Sprintf("▲ %d %s degraded or dropped — see product.md",
 			len(*deg), plural(len(*deg), "source", "sources"))))
@@ -75,10 +80,98 @@ func Summary(d client.ProductDossier, jsonPath, mdPath string) string {
 
 	sb.WriteString("\n  " + Rule(w) + "\n")
 	sb.WriteString("  " + Spread(w,
-		Gradient("→", false)+" "+Body.Render(mdPath), Dim.Render("markdown")) + "\n")
+		Gradient("→", false)+" "+Body.Render(paths.MD), Dim.Render("markdown")) + "\n")
 	sb.WriteString("  " + Spread(w,
-		Dim.Render("  "+jsonPath), Dim.Render("json")) + "\n")
+		Dim.Render("  "+paths.JSON), Dim.Render("json")) + "\n")
+	if paths.Posts != "" {
+		sb.WriteString("  " + Spread(w,
+			Dim.Render("  "+paths.Posts), Dim.Render("posts")) + "\n")
+	}
 	return sb.String()
+}
+
+// topPosts is how many scraped discussions the readout lists. Enough to prove
+// the scrape worked and to make the loudest complaints visible; short enough
+// that the summary still fits one screen.
+const topPosts = 5
+
+// harvestBlock renders T1's result: where it looked, what it found, and — when
+// the live scraper was unavailable — that the posts are recorded ones.
+func harvestBlock(h *client.Harvest, w int) string {
+	if h == nil {
+		return ""
+	}
+	var sb strings.Builder
+
+	targets := []string{}
+	if r := h.Targets.Reddit; r != nil {
+		if subs := r.Subreddits; subs != nil {
+			for _, name := range *subs {
+				targets = append(targets, Body.Render("r/"+name))
+			}
+		}
+		if q := r.SearchQueries; q != nil {
+			for _, query := range *q {
+				targets = append(targets, Muted.Render("\u201c"+query+"\u201d"))
+			}
+		}
+	}
+	if len(targets) > 0 {
+		sb.WriteString("\n" + row("SOURCES", strings.Join(targets, Dim.Render(", "))))
+	}
+
+	posts := []client.Post{}
+	if h.Posts != nil {
+		posts = *h.Posts
+	}
+	label := Good.Render("live")
+	if !h.Live {
+		label = Warn.Render("recorded")
+	}
+	sb.WriteString("\n" + rowW(w, "POSTS",
+		Title.Render(fmt.Sprintf("%d", len(posts)))+"  "+
+			Dim.Render(plural(len(posts), "discussion scraped", "discussions scraped")),
+		label))
+
+	// Loudest first: engagement is the closest thing to a severity signal we
+	// have before T2 reads the threads.
+	ranked := append([]client.Post{}, posts...)
+	sort.SliceStable(ranked, func(i, j int) bool { return score(ranked[i]) > score(ranked[j]) })
+	if len(ranked) > topPosts {
+		ranked = ranked[:topPosts]
+	}
+	for _, p := range ranked {
+		sb.WriteString(rowW(w, "", Accent.Render("\u203a")+" "+Body.Render(headline(p)),
+			Dim.Render(fmt.Sprintf("%s  %d", deref(p.Channel), score(p)))))
+	}
+	if n := len(posts) - len(ranked); n > 0 {
+		sb.WriteString(row("", Dim.Render(fmt.Sprintf("+ %d more in posts.json", n))))
+	}
+	return sb.String()
+}
+
+func score(p client.Post) int {
+	if p.Score == nil {
+		return 0
+	}
+	return *p.Score
+}
+
+// headline is a post's title, or the opening of its body when it has none —
+// X posts have no title at all, and Reddit link posts have no body.
+func headline(p client.Post) string {
+	text := strings.TrimSpace(deref(p.Title))
+	if text == "" {
+		text = strings.TrimSpace(deref(p.Body))
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return p.Url
+	}
+	if len(text) > 58 {
+		text = strings.TrimSpace(text[:57]) + "\u2026"
+	}
+	return text
 }
 
 // rowW is row with a right-hand column pinned to the frame's right edge. When
