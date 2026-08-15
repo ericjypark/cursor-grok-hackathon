@@ -116,7 +116,11 @@ func consumeQuietly(events <-chan client.Event) (client.ProductDossier, error) {
 		switch ev.Kind {
 		case "stage":
 			if s, err := ev.Stage(); err == nil && s.Status == "done" {
-				fmt.Fprintf(os.Stderr, "· %s %s\n", s.Stage, strings.TrimSpace(deref(s.Detail)))
+				line := string(s.Stage)
+				if detail := strings.TrimSpace(deref(s.Detail)); detail != "" {
+					line += " " + detail
+				}
+				fmt.Fprintln(os.Stderr, "· "+line)
 			}
 		case "error":
 			e, err := ev.Err()

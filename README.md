@@ -25,24 +25,45 @@ product name with no category context, partitions the results by domain, and
 the leftovers are the collision set — so a collision that can't be traced to a
 page we actually fetched gets dropped before it reaches you.
 
-## Install
+## Quick start
+
+One command — clones the backend if needed, syncs it, starts it, builds the
+CLI and runs it. Shuts the server down on exit unless one was already running.
+
+```bash
+./run.sh --url https://cursor.com --name Cursor --repo getcursor/cursor
+```
+
+Bare, to be prompted for each input:
+
+```bash
+./run.sh
+```
+
+Without API keys, use the canned dossier — real server, real CLI, real SSE, no
+APIs called. Also worth using to rehearse a demo rather than betting it on
+three external services staying up:
+
+```bash
+./run.sh --demo --url https://cursor.com
+```
+
+`--demo` always returns the same Cursor dossier whatever you pass it. Every
+other flag is forwarded to the CLI untouched.
+
+Override the defaults with `FIELDNOTE_BACKEND_DIR` (defaults to a sibling
+`field-note-backend`) and `FIELDNOTE_PORT` (defaults to 8000).
+
+## Running the pieces by hand
 
 ```bash
 go build -o fieldnote ./cmd/fieldnote
 ```
 
-## Use
-
-Start the backend first (see its README), then:
+With the backend already up (see its README):
 
 ```bash
 ./fieldnote --url https://cursor.com --name Cursor --repo getcursor/cursor
-```
-
-Run it bare to be prompted for each input:
-
-```bash
-./fieldnote
 ```
 
 | Flag | Meaning |
