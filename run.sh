@@ -49,14 +49,27 @@ paint() {
   printf '%s%s' "$out" "$off"
 }
 
-# rule draws the gradient divider, matching the CLI's 60-column frame.
+# frame_width mirrors the CLI's own sizing: the window less a two-column
+# margin, capped at 120 and floored at 44.
+frame_width() {
+  local cols
+  cols=$( { tput cols; } 2>/dev/null ) || cols=80
+  [ -n "$cols" ] && [ "$cols" -gt 0 ] 2>/dev/null || cols=80
+  local w=$((cols - 4))
+  [ "$w" -gt 120 ] && w=120
+  [ "$w" -lt 44 ] && w=$((cols < 44 ? cols : 44))
+  printf '%s' "$w"
+}
+
+# rule draws the gradient divider across the same frame the CLI uses.
 rule() {
-  local i out=''
+  local i out='' n
+  n=$(frame_width)
   # Literal box-drawing characters, not \u escapes: bash 3.2 (the macOS
   # default) prints those verbatim rather than expanding them.
-  if [ "$COLOR" -eq 0 ]; then printf '%60s' '' | tr ' ' '-'; return; fi
-  if [ "$TRUECOLOR" -eq 0 ]; then printf '%s' "$violet"; for ((i = 0; i < 60; i++)); do out+='─'; done
-  else for ((i = 0; i < 60; i++)); do out+="$(ramp "$i" 60)─"; done; fi
+  if [ "$COLOR" -eq 0 ]; then printf "%${n}s" '' | tr ' ' '-'; return; fi
+  if [ "$TRUECOLOR" -eq 0 ]; then printf '%s' "$violet"; for ((i = 0; i < n; i++)); do out+='─'; done
+  else for ((i = 0; i < n; i++)); do out+="$(ramp "$i" "$n")─"; done; fi
   printf '%s%s' "$out" "$off"
 }
 
