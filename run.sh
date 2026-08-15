@@ -164,7 +164,9 @@ step "Building the CLI"
 
 printf '  %s\n' "$(rule)"
 set +e
-"$HERE/fieldnote" --backend "$BASE" "${CLI_ARGS[@]}"
+# bash 3.2 (the macOS default) treats an empty array under `set -u` as an
+# unbound variable, so the expansion is guarded rather than written plainly.
+"$HERE/fieldnote" --backend "$BASE" ${CLI_ARGS[@]+"${CLI_ARGS[@]}"}
 STATUS=$?
 set -e
 exit "$STATUS"
