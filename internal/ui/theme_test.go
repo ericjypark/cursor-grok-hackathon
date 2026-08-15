@@ -121,3 +121,74 @@ func TestBannerSpansTheFrameAtEveryWidth(t *testing.T) {
 		}
 	}
 }
+
+// The banner draws itself in over the run's first two seconds, on top of a
+// stage list that is already rendering under it. A reveal that changed the
+// block's size on any frame would reflow every row below it twelve times a
+// second.
+func TestBannerRevealHoldsItsBlockAtEveryFrame(t *testing.T) {
+	for _, w := range []int{40, 76, 120, 200} {
+		for frame := 0; frame <= revealFrames+5; frame++ {
+			lines := strings.Split(BannerAt(w, frame), "\n")
+			if len(lines) != 5 {
+				t.Fatalf("BannerAt(%d, %d) is %d lines, want 5", w, frame, len(lines))
+			}
+			for i, ln := range lines {
+				if got := lipgloss.Width(ln); got != w {
+					t.Fatalf("BannerAt(%d, %d) line %d is %d wide", w, frame, i, got)
+				}
+			}
+		}
+	}
+}
+
+// The reveal has to actually be a reveal: empty at the first frame, complete
+// by the last, and never going backwards in between.
+func TestBannerRevealAdvancesAndSettles(t *testing.T) {
+	// The wordmark row, counted between its own two rails: everything not yet
+	// revealed is held back as a space.
+	lit := func(frame int) int {
+		row := []rune(stripANSI(strings.Split(BannerAt(60, frame), "\n")[2]))
+		n := 0
+		for _, r := range row[1 : len(row)-1] {
+			if r != ' ' {
+				n++
+			}
+		}
+		return n
+	}
+	if lit(0) != 0 {
+		t.Errorf("the wordmark was already on screen at frame 0")
+	}
+	prev := 0
+	for frame := 0; frame <= revealFrames; frame++ {
+		if n := lit(frame); n < prev {
+			t.Fatalf("frame %d un-revealed part of the wordmark", frame)
+		} else {
+			prev = n
+		}
+	}
+	// Once revealed it is the banner, exactly — a settled frame that differs
+	// from the static wordmark would flicker at the end of the reveal.
+	if BannerAt(60, revealFrames+30) != Banner(60) {
+		t.Error("the settled reveal is not the banner")
+	}
+}
+
+func TestGaugeKeepsItsWidthAndPlacesTheNeedle(t *testing.T) {
+	for _, pct := range []float64{0, 0.25, 0.75, 1} {
+		g := Gauge(16, pct, Warn)
+		if got := lipgloss.Width(g); got != 16 {
+			t.Errorf("Gauge(16, %v) is %d wide, want 16", pct, got)
+		}
+		want := int(pct*16 + 0.5)
+		if got := strings.Count(g, "▰"); got != want {
+			t.Errorf("Gauge(16, %v) filled %d cells, want %d", pct, got, want)
+		}
+	}
+	// An empty gauge has nothing to point at, and must not borrow the last
+	// cell of the track to say so.
+	if strings.Contains(Gauge(8, 0, Warn), "▰") {
+		t.Error("an empty gauge drew a needle")
+	}
+}

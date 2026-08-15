@@ -138,20 +138,107 @@ func Box(width int, lines ...string) string {
 }
 
 // Banner is the wordmark that opens every run. It spans the frame, with the
-// wordmark on the left rail and the tagline pinned to the right one.
-func Banner(width int) string {
-	mark := Gradient("◆", true)
-	word := Gradient("F I E L D N O T E", true)
-	tag := Dim.Render("product understanding") + " " + Accent.Render("·") + " " + Dim.Render("T0")
+// wordmark on the left rail.
+func Banner(width int) string { return BannerAt(width, revealFrames) }
 
-	inner := width - 2
-	left := "  " + mark + "  " + word
-	// Below this the tagline would collide with the wordmark, so it drops to
-	// its own line rather than being truncated.
-	if lipgloss.Width(left)+lipgloss.Width(tag)+4 > inner {
-		return Box(width, "", left, "  "+tag, "")
+// revealFrames is how long the wordmark takes to draw itself in, counted in
+// spinner ticks (12/sec). Long enough to read as a reveal from the back of a
+// room, short enough that it is over before the first stage reports.
+const revealFrames = 22
+
+// BannerAt draws the banner mid-reveal: the frame's rule and the wordmark wipe
+// in left to right, lit cells carrying the ramp and the rest sitting dim. The
+// block is the same size at every frame — a banner that grows would reflow the
+// stage list under it on every tick.
+func BannerAt(width, frame int) string {
+	t := 1.0
+	if frame < revealFrames {
+		t = float64(frame) / float64(revealFrames)
 	}
-	return Box(width, "", Spread(inner-2, left, tag)+" ", "")
+	mark := " "
+	if t > 0 {
+		mark = Gradient("◆", true)
+	}
+	// The wordmark trails the rule slightly, so the frame reads as drawing
+	// itself and the name as arriving inside it rather than the two racing.
+	word := wipe("F I E L D N O T E", (t-0.15)/0.85)
+	inner := max(width-2, 1)
+	edge := func(l, r string) string {
+		return wipeRule(l+strings.Repeat("─", inner)+r, t)
+	}
+	body := "  " + mark + "  " + word
+	pad := max(inner-lipgloss.Width(body), 0)
+	// The sides light with the sweep that passes them: the left rail as the
+	// wipe leaves it, the right one only once the rule has reached the corner.
+	l, r := Dim, Dim
+	if t > 0.05 {
+		l = lipgloss.NewStyle().Foreground(RampAt(0))
+	}
+	if t >= 1 {
+		r = lipgloss.NewStyle().Foreground(RampAt(1))
+	}
+	rail := func(mid string) string { return l.Render("│") + mid + r.Render("│") }
+	return edge("╭", "╮") + "\n" +
+		rail(strings.Repeat(" ", inner)) + "\n" +
+		rail(body+strings.Repeat(" ", pad)) + "\n" +
+		rail(strings.Repeat(" ", inner)) + "\n" +
+		edge("╰", "╯")
+}
+
+// litAt is RampAt for the reveal, which paints one rune at a time and so has
+// the same problem Gradient does: on a terminal that cannot render the curve,
+// per-rune sampling is banding, not a gradient. The wipe still reads, because
+// what carries it is the lit edge against the dim remainder, not the hue.
+func litAt(t float64) lipgloss.Color {
+	if !hasTrueColor() {
+		return lipgloss.Color("#7C5CFF")
+	}
+	return RampAt(t)
+}
+
+// wipe reveals the first t of s in the ramp and holds the rest back as spaces,
+// with a bright head on the boundary so the reveal has a leading edge rather
+// than a soft edge nobody notices.
+func wipe(s string, t float64) string {
+	runes := []rune(s)
+	if t >= 1 {
+		return Gradient(s, true)
+	}
+	cut := int(t * float64(len(runes)))
+	var sb strings.Builder
+	den := float64(len(runes) - 1)
+	for i, r := range runes {
+		switch {
+		case i < cut-1:
+			sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(litAt(float64(i) / den)).Render(string(r)))
+		case i == cut-1:
+			sb.WriteString(Title.Render(string(r)))
+		default:
+			sb.WriteString(" ")
+		}
+	}
+	return sb.String()
+}
+
+// wipeRule is wipe for the frame's own edges, where the unlit remainder stays
+// drawn — a half-drawn box reads as a rendering fault, a half-lit one reads as
+// the box switching on.
+func wipeRule(s string, t float64) string {
+	if t >= 1 {
+		return Gradient(s, false)
+	}
+	runes := []rune(s)
+	cut := int(t * float64(len(runes)))
+	den := float64(len(runes) - 1)
+	var sb strings.Builder
+	for i, r := range runes {
+		if i < cut {
+			sb.WriteString(lipgloss.NewStyle().Foreground(litAt(float64(i) / den)).Render(string(r)))
+		} else {
+			sb.WriteString(Dim.Render(string(r)))
+		}
+	}
+	return sb.String()
 }
 
 // Spread lays a left and a right fragment against the two edges of a width,
@@ -189,6 +276,44 @@ func Meter(width int, pct float64) string {
 		}
 	}
 	return sb.String()
+}
+
+// Gauge is Meter with a needle: the leading filled cell is drawn in the tint
+// the caller's verdict picked. A plain meter says how full it is; a needle in
+// the verdict's own color says how full is too full, which is the only reason
+// the number is on screen.
+func Gauge(width int, pct float64, tint lipgloss.Style) string {
+	if width < 1 {
+		return ""
+	}
+	filled := min(int(pct*float64(width)+0.5), width)
+	var sb strings.Builder
+	den := float64(width - 1)
+	for i := 0; i < width; i++ {
+		switch {
+		case i == filled-1:
+			sb.WriteString(tint.Bold(true).Render("▰"))
+		case i < filled:
+			t := 0.0
+			if den > 0 {
+				t = float64(i) / den
+			}
+			sb.WriteString(lipgloss.NewStyle().Foreground(RampAt(t)).Render("▰"))
+		default:
+			sb.WriteString(Dim.Render("▱"))
+		}
+	}
+	return sb.String()
+}
+
+// HeavyRule is the divider under the summary's wordmark. A second weight of
+// line is what separates the headline from the closing rule; two identical
+// rules read as two halves of one list.
+func HeavyRule(width int) string {
+	if width < 1 {
+		return ""
+	}
+	return Gradient(strings.Repeat("━", width), false)
 }
 
 // Pulse renders an indeterminate bar: a lit band sweeps back and forth, its
