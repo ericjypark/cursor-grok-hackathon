@@ -104,7 +104,7 @@ have_key() {
 
 if [ "$DEMO" -eq 0 ]; then
   missing=()
-  for key in FIRECRAWL_API_KEY EXA_API_KEY LLM_API_KEY; do
+  for key in FIRECRAWL_API_KEY EXA_API_KEY XAI_API_KEY; do
     have_key "$key" || missing+=("$key")
   done
   if [ ${#missing[@]} -gt 0 ]; then
@@ -141,7 +141,7 @@ else
   # set them: an environment variable outranks .env in pydantic-settings, so
   # injecting dummies here silently overrides the user's real credentials.
   if [ "$DEMO" -eq 1 ]; then
-    ( cd "$BACKEND_DIR" && exec env FIRECRAWL_API_KEY=x EXA_API_KEY=x LLM_API_KEY=x \
+    ( cd "$BACKEND_DIR" && exec env FIRECRAWL_API_KEY=x EXA_API_KEY=x XAI_API_KEY=x \
         uv run uvicorn "$APP" --port "$PORT" ) > "$LOG" 2>&1 &
   else
     ( cd "$BACKEND_DIR" && exec uv run uvicorn "$APP" --port "$PORT" ) > "$LOG" 2>&1 &
