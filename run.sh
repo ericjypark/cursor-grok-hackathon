@@ -132,8 +132,22 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if curl -sf "$BASE/health" >/dev/null 2>&1; then
-  step "Reusing the backend already on port $PORT"
+WANT_MODE="live"; [ "$DEMO" -eq 1 ] && WANT_MODE="demo"
+EXISTING="$(curl -sf -m 3 "$BASE/health" 2>/dev/null || true)"
+
+if [ -n "$EXISTING" ]; then
+  # Reusing a server in the other mode is silent and ruinous: a leftover demo
+  # backend answers every real run with the same canned dossier.
+  case "$EXISTING" in
+    *"\"mode\":\"$WANT_MODE\""*)
+      step "Reusing the backend already on port $PORT" ;;
+    *)
+      printf '%s error:%s port %s already has a backend in the wrong mode.\n\n' "$red" "$off" "$PORT" >&2
+      printf '  wanted: %s\n  found:  %s\n\n' "$WANT_MODE" "$EXISTING" >&2
+      printf '  Stop it:        %spkill -f "uvicorn .*--port %s"%s\n' "$bold" "$PORT" "$off" >&2
+      printf '  Or use another: %sFIELDNOTE_PORT=8001 ./run.sh ...%s\n\n' "$bold" "$off" >&2
+      exit 1 ;;
+  esac
 else
   step "Starting the backend on port $PORT"
   LOG="${TMPDIR:-/tmp}/fieldnote-backend.log"
