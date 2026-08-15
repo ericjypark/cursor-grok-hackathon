@@ -27,9 +27,9 @@ func main() {
 
 func run() error {
 	var (
-		url      = flag.String("url", "", "product website (required)")
-		name     = flag.String("name", "", "product name (optional; derived from the site if omitted)")
-		repo     = flag.String("repo", "", "GitHub repo as owner/repo or a full URL (optional)")
+		url      = flag.String("url", "", "product website (optional)")
+		name     = flag.String("name", "", "product name (optional; derived from the repo or site if omitted)")
+		repo     = flag.String("repo", "", "GitHub repo as owner/repo or a full URL (required)")
 		details  = flag.String("details", "", "free-text detail form (optional)")
 		backend  = flag.String("backend", envOr("FIELDNOTE_BACKEND", "http://127.0.0.1:8000"), "backend base URL")
 		asJSON   = flag.Bool("json", false, "print the results as JSON and skip the interactive UI")
@@ -61,7 +61,10 @@ func run() error {
 		}
 		req.Repo = normalized
 		if err := input.ValidateWebsite(req.Website); err != nil {
-			return fmt.Errorf("--url is required when not running in a terminal: %w", err)
+			return err
+		}
+		if err := input.ValidateRepo(req.Repo); err != nil {
+			return fmt.Errorf("--repo is required when not running in a terminal: %w", err)
 		}
 	}
 

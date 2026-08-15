@@ -3,7 +3,7 @@
 CLI frontend for the field-note pipeline: **T0 — product understanding** and
 **T1 — finding where users complain**.
 
-You give it a product website (plus, optionally, a GitHub repo and a free-text
+You give it a GitHub repo (plus, optionally, a product website and a free-text
 description). It calls the [field-note backend](https://github.com/in-sol-ence/field-note-backend),
 streams live progress, and writes a dossier plus the discussions it scraped.
 
@@ -61,7 +61,7 @@ scrape-then-fall-back path. Also worth using to rehearse a demo rather than
 betting it on three external services staying up:
 
 ```bash
-./run.sh --demo --url https://cursor.com
+./run.sh --demo --repo getcursor/cursor
 ```
 
 `--demo` always returns the same Cursor dossier whatever you pass it. Every
@@ -87,9 +87,9 @@ With the backend already up (see its README):
 
 | Flag | Meaning |
 |---|---|
-| `--url` | Product website. The only required input. |
-| `--name` | Product name. Derived from the site when omitted. |
-| `--repo` | `owner/repo` or a full GitHub URL. Optional. |
+| `--url` | Product website. Optional. |
+| `--name` | Product name. Derived from the repo or site when omitted. |
+| `--repo` | `owner/repo` or a full GitHub URL. The only required input. |
 | `--details` | Free-text description. Optional, but the most precise disambiguation signal available. |
 | `--backend` | Backend base URL. Defaults to `$FIELDNOTE_BACKEND` or `http://127.0.0.1:8000`. |
 | `--json` | Print the results to stdout and skip the interactive UI. |
@@ -104,7 +104,7 @@ Output lands in `out/<slug>/`:
   T2's input. Absent on a `--no-scrape` run.
 
 Piped or redirected output automatically drops the animated UI, so
-`./fieldnote --url acme.dev > run.log` behaves.
+`./fieldnote --repo acme/acme > run.log` behaves.
 
 ## Types are generated
 

@@ -3,9 +3,9 @@
 # One command to get a run going: starts the backend, builds the CLI, runs it.
 #
 #   ./run.sh                                  # prompts for the inputs
-#   ./run.sh --url https://cursor.com         # or pass them straight through
+#   ./run.sh --repo getcursor/cursor          # or pass them straight through
 #   ./run.sh --demo                           # canned dossier, no API keys needed
-#   ./run.sh --url ... --no-scrape            # T0 only, skip the scrape
+#   ./run.sh --repo ... --no-scrape           # T0 only, skip the scrape
 #
 # Any flag other than --demo is forwarded to the CLI verbatim.
 #
