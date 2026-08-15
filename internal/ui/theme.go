@@ -138,20 +138,11 @@ func Box(width int, lines ...string) string {
 }
 
 // Banner is the wordmark that opens every run. It spans the frame, with the
-// wordmark on the left rail and the tagline pinned to the right one.
+// wordmark on the left rail.
 func Banner(width int) string {
 	mark := Gradient("◆", true)
 	word := Gradient("F I E L D N O T E", true)
-	tag := Dim.Render("product understanding") + " " + Accent.Render("·") + " " + Dim.Render("T0")
-
-	inner := width - 2
-	left := "  " + mark + "  " + word
-	// Below this the tagline would collide with the wordmark, so it drops to
-	// its own line rather than being truncated.
-	if lipgloss.Width(left)+lipgloss.Width(tag)+4 > inner {
-		return Box(width, "", left, "  "+tag, "")
-	}
-	return Box(width, "", Spread(inner-2, left, tag)+" ", "")
+	return Box(width, "", "  "+mark+"  "+word, "")
 }
 
 // Spread lays a left and a right fragment against the two edges of a width,

@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -61,5 +62,91 @@ func TestViewStaysInsideNarrowWindows(t *testing.T) {
 				t.Errorf("%dx%d: line %d is %d wide, past the right edge", cols, rows, i, w)
 			}
 		}
+	}
+}
+
+// The longest stage in the run is one opaque model call, so the row has to say
+// what the backend is on and how long it has been on it — otherwise a working
+// minute is indistinguishable from a hang.
+func TestRunningStageShowsItsNoteAndStopwatch(t *testing.T) {
+	m := newModel(nil, false)
+	m.cols, m.rows, m.width = 120, 40, Fit(120)
+	m.set("synthesize", "running", "grok-4.6 · drafting from 12 evidence blocks")
+	m.stages[6].startedAt = time.Now().Add(-90 * time.Second)
+
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "↳ grok-4.6 · drafting from 12 evidence blocks") {
+		t.Errorf("running stage drew no note line:\n%s", view)
+	}
+	if !strings.Contains(view, "01:30") {
+		t.Errorf("running stage drew no stopwatch:\n%s", view)
+	}
+	// The note belongs under the label, not beside it.
+	for _, ln := range strings.Split(view, "\n") {
+		if strings.Contains(ln, "Synthesizing the dossier") && strings.Contains(ln, "grok-4.6") {
+			t.Errorf("note collided with the label row: %q", ln)
+		}
+	}
+}
+
+// A note is worth more than the pulse, so a window with no room for a second
+// line surrenders the pulse rather than the note.
+func TestNoteSurvivesAWindowTooShortForSubLines(t *testing.T) {
+	m := newModel(nil, true)
+	m.cols, m.rows, m.width = 120, 16, Fit(120)
+	m.set("scrape_reddit", "running", "r/cursor · 12 threads")
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "↳") {
+		t.Errorf("short window still drew a sub-line:\n%s", view)
+	}
+	if !strings.Contains(view, "r/cursor · 12 threads") {
+		t.Errorf("short window dropped the note entirely:\n%s", view)
+	}
+}
+
+func TestStopwatchDropsMillisecondsAndRollsOverToMinutes(t *testing.T) {
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{400 * time.Millisecond, "0.4s"},
+		{12300 * time.Millisecond, "12.3s"},
+		{95 * time.Second, "01:35"},
+	} {
+		if got := stopwatch(c.d); got != c.want {
+			t.Errorf("stopwatch(%s) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+func stripANSI(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b {
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			continue
+		}
+		sb.WriteByte(s[i])
+	}
+	return sb.String()
+}
+
+// The running stage is the last row a cramped window gives up, not the first:
+// clipping the tail once dropped the only stage doing any work.
+func TestShortWindowKeepsTheRunningStage(t *testing.T) {
+	m := newModel(nil, true)
+	m.cols, m.rows, m.width = 120, 16, Fit(120)
+	m.set("map", "done", "150 pages")
+	m.set("scrape_reddit", "running", "r/cursor")
+
+	var running bool
+	for _, s := range fit(m.stages, 6) {
+		running = running || s.key == "scrape_reddit"
+	}
+	if !running {
+		t.Error("a short window dropped the stage that was actually working")
 	}
 }

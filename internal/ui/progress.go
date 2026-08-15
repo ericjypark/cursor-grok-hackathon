@@ -269,15 +269,18 @@ func (m model) View() string {
 	// only have what is left after them. Eleven stages do not fit a short
 	// window, and a view taller than its window scrolls the terminal and tears
 	// the frame apart.
-	shown := fit(m.stages, m.rows-headH-footH-2)
-	rows := make([]string, 0, len(shown))
-	for _, s := range shown {
-		rows = append(rows, " "+m.stageLine(s, m.width-2))
+	budget := m.rows - headH - footH - 2
+	shown := fit(m.stages, budget)
+	rows := m.stageRows(shown, true)
+	// Sub-lines are the first thing a short window gives up: dropping one
+	// costs a note, dropping a row costs a whole stage.
+	if height(rows) > budget {
+		rows = m.stageRows(shown, false)
 	}
 
-	sep, listH := "\n", len(rows)
+	sep, listH := "\n", height(rows)
 	if m.rows-headH-listH-footH >= listH {
-		sep, listH = "\n\n", 2*len(rows)-1
+		sep, listH = "\n\n", listH+len(rows)-1
 	}
 
 	// free is the blank-line budget; splitting it above and below the list
@@ -293,10 +296,26 @@ func (m model) View() string {
 	return rail(body, m.width)
 }
 
+func (m model) stageRows(stages []stage, withSubs bool) []string {
+	rows := make([]string, 0, len(stages))
+	for _, s := range stages {
+		rows = append(rows, " "+m.stageLine(s, m.width-2, withSubs))
+	}
+	return rows
+}
+
+func height(rows []string) int {
+	n := 0
+	for _, r := range rows {
+		n += lipgloss.Height(r)
+	}
+	return n
+}
+
 // fit picks which stage rows to draw when the window cannot hold them all.
-// Finished stages go first — the footer already reports how many are done, and
-// what a watcher needs to see is the stage running now and the ones still
-// ahead of it. Past that, the tail is clipped.
+// Finished stages go first — the footer already reports how many are done —
+// then queued ones from the tail back. Running stages are surrendered last:
+// what a watcher needs to see is the work happening right now.
 func fit(stages []stage, budget int) []stage {
 	if budget >= len(stages) {
 		return stages
@@ -304,14 +323,26 @@ func fit(stages []stage, budget int) []stage {
 	if budget < 1 {
 		budget = 1
 	}
-	out := make([]stage, 0, budget)
+	keep := make([]bool, len(stages))
+	for i := range keep {
+		keep[i] = true
+	}
 	drop := len(stages) - budget
-	for _, s := range stages {
-		if drop > 0 && s.status == "done" {
-			drop--
-			continue
+	for i := 0; i < len(stages) && drop > 0; i++ {
+		if stages[i].status == "done" {
+			keep[i], drop = false, drop-1
 		}
-		out = append(out, s)
+	}
+	for i := len(stages) - 1; i >= 0 && drop > 0; i-- {
+		if keep[i] && stages[i].status == "pending" {
+			keep[i], drop = false, drop-1
+		}
+	}
+	out := make([]stage, 0, budget)
+	for i, s := range stages {
+		if keep[i] {
+			out = append(out, s)
+		}
 	}
 	if len(out) > budget {
 		out = out[:budget]
@@ -332,9 +363,12 @@ func rail(block string, width int) string {
 }
 
 // stageLine draws one row: status glyph, label, then a trailing column that is
-// a live pulse while running and a timing/detail readout once settled.
-func (m model) stageLine(s stage, width int) string {
-	var icon, label, trail string
+// a live pulse while running and a timing/detail readout once settled. A
+// running stage with a note gets a second line under it — synthesis and the
+// scrapes are minutes long, and a row that only says "running" for that long
+// is indistinguishable from a hang.
+func (m model) stageLine(s stage, width int, withSub bool) string {
+	var icon, label, trail, sub string
 	switch s.status {
 	case "done":
 		icon, label = Good.Render("✔"), Body.Render(s.label)
@@ -344,10 +378,17 @@ func (m model) stageLine(s stage, width int) string {
 		trail += Dim.Render(dur(s.elapsed))
 	case "running":
 		icon, label = m.spin.View(), Title.Render(s.label)
-		if s.detail != "" {
-			trail = Muted.Render(s.detail)
-		} else {
-			trail = Pulse(meterWidth(width), m.frame)
+		// The stopwatch runs off startedAt, so it ticks with the spinner
+		// rather than waiting on the backend to say something.
+		trail = Pulse(meterWidth(width), m.frame) + "  " + Dim.Render(stopwatch(m.since(s)))
+		switch {
+		case s.detail == "":
+		case withSub:
+			sub = Dim.Render("↳ ") + Muted.Render(s.detail)
+		default:
+			// No room for a second line: the note is worth more than the
+			// pulse, so it takes the trailing column back.
+			trail = Muted.Render(s.detail) + "  " + Dim.Render(stopwatch(m.since(s)))
 		}
 	case "failed":
 		icon, label = Warn.Render("▲"), Body.Render(s.label)
@@ -360,10 +401,33 @@ func (m model) stageLine(s stage, width int) string {
 	left := icon + "  " + label
 	// Below the aligned label column the row would overlap, so the trailing
 	// readout is dropped rather than wrapped.
+	row := Spread(width, left, trail)
 	if width < labelCol+lipgloss.Width(trail)+4 {
-		return left
+		row = left
 	}
-	return Spread(width, left, trail)
+	if sub != "" {
+		row += "\n   " + sub
+	}
+	return row
+}
+
+// since reports how long a stage has been running, and nothing for a stage
+// that has not started or has already settled.
+func (m model) since(s stage) time.Duration {
+	if s.startedAt.IsZero() || s.status != "running" {
+		return 0
+	}
+	return time.Since(s.startedAt)
+}
+
+// stopwatch formats a still-running stage's elapsed time. Unlike dur it never
+// renders milliseconds: a figure repainting twelve times a second is motion,
+// not information, and the spinner already carries that job.
+func stopwatch(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return clock(d)
 }
 
 func dur(d time.Duration) string {
@@ -373,7 +437,10 @@ func dur(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
-	return fmt.Sprintf("%.1fs", d.Seconds())
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return clock(d)
 }
 
 func clock(d time.Duration) string {
