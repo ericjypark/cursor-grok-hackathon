@@ -587,6 +587,14 @@ func (m model) stageLine(s stage, width int, withSub bool) string {
 	case "failed":
 		icon, label = Warn.Render("▲"), Body.Render(s.label)
 		trail = Warn.Render("degraded")
+	case "skipped":
+		// Never attempted (a repo-only run has no site to map). Dim so it does
+		// not read as queued work, but named so nobody waits on it.
+		icon, label = Dim.Render("–"), Dim.Render(s.label)
+		trail = Dim.Render("skipped")
+		if s.detail != "" {
+			trail = Dim.Render("skipped · " + s.detail)
+		}
 	default:
 		// Six rows all reading "queued" is six rows of noise. The queue says
 		// what it is by being dim; only its front is worth a word.
@@ -626,7 +634,9 @@ func (m model) stageLine(s stage, width int, withSub bool) string {
 }
 
 // settled reports whether a status is one a stage stops moving in.
-func settled(status string) bool { return status == "done" || status == "failed" }
+func settled(status string) bool {
+	return status == "done" || status == "failed" || status == "skipped"
+}
 
 // flash reports how far into the completion transition a settled row is: 2
 // while its bar holds full, 1 while the row is still lit, 0 once it has cooled

@@ -159,6 +159,7 @@ const (
 	Done    StageEventStatus = "done"
 	Failed  StageEventStatus = "failed"
 	Running StageEventStatus = "running"
+	Skipped StageEventStatus = "skipped"
 )
 
 // Valid indicates whether the value is a known member of the StageEventStatus enum.
@@ -169,6 +170,8 @@ func (e StageEventStatus) Valid() bool {
 	case Failed:
 		return true
 	case Running:
+		return true
+	case Skipped:
 		return true
 	default:
 		return false

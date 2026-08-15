@@ -374,3 +374,20 @@ func TestAPhaseHeaderStaysGluedToItsFirstStage(t *testing.T) {
 		}
 	}
 }
+
+// A stage the backend never attempts must not sit in the queue looking like
+// work still to come: it says it was skipped, and why.
+func TestSkippedStageIsNamedNotQueued(t *testing.T) {
+	m := newModel(nil, false)
+	m.cols, m.rows, m.width = 100, 40, Fit(100)
+	m.set("map", "skipped", "no website")
+	m.set("scrape_repo", "running", "")
+
+	view := m.View()
+	if !strings.Contains(view, "skipped · no website") {
+		t.Errorf("skipped stage not named:\n%s", view)
+	}
+	if m.nextKey == "map" {
+		t.Errorf("skipped stage still counts as the next queued stage")
+	}
+}
