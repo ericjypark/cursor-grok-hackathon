@@ -36,6 +36,9 @@ func FormTheme() *huh.Theme {
 // FormHeader is the slim lead-in above the prompts. The full wordmark is saved
 // for the progress view, so the two never compete in one scrollback.
 func FormHeader() string {
-	return "\n  " + Gradient("◆", true) + "  " + Title.Render("fieldnote") +
-		"  " + Dim.Render("· tell us what to look at") + "\n  " + Rule(frameWidth) + "\n"
+	cols, _ := TermSize()
+	w := Fit(cols)
+	head := Gradient("◆", true) + "  " + Title.Render("fieldnote")
+	return "\n  " + Spread(w, head, Dim.Render("tell us what to look at")) +
+		"\n  " + Rule(w) + "\n"
 }

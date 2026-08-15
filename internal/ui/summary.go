@@ -17,14 +17,20 @@ const keyCol = 12
 // verdict, and where the artifacts landed.
 func Summary(d client.ProductDossier, jsonPath, mdPath string) string {
 	var sb strings.Builder
-	w := frameWidth
+	cols, _ := TermSize()
+	w := Fit(cols)
 
 	head := Gradient(spaced(d.Identity.CanonicalName), true)
-	if cat := strings.TrimSpace(deref(d.What.Category)); cat != "" {
-		head += "  " + Dim.Render("·") + "  " + Muted.Render(cat)
+	cat := strings.TrimSpace(deref(d.What.Category))
+	if cat != "" {
+		cat = Muted.Render(cat)
 	}
-	sb.WriteString("\n  " + head + "\n")
-	sb.WriteString("  " + Rule(w) + "\n\n")
+	sb.WriteString("\n  " + Spread(w, head, cat) + "\n")
+	sb.WriteString("  " + Rule(w) + "\n")
+	if tag := strings.TrimSpace(deref(d.Identity.Tagline)); tag != "" {
+		sb.WriteString("  " + Muted.Render(tag) + "\n")
+	}
+	sb.WriteString("\n")
 
 	score := d.Disambiguation.AmbiguityScore
 	verdict := Good
@@ -34,9 +40,9 @@ func Summary(d client.ProductDossier, jsonPath, mdPath string) string {
 	if score >= 0.7 {
 		verdict = Bad
 	}
-	sb.WriteString(row("AMBIGUITY",
-		Meter(barWidth, float64(score))+"  "+Title.Render(fmt.Sprintf("%.2f", score))))
-	sb.WriteString(row("", verdict.Render(render.AmbiguityVerdict(score))))
+	sb.WriteString(rowW(w, "AMBIGUITY",
+		Meter(min(meterWidth(w), 18), float64(score))+"  "+Title.Render(fmt.Sprintf("%.2f", score)),
+		verdict.Render(render.AmbiguityVerdict(score))))
 
 	collisions := d.Disambiguation.NameCollisions
 	n := 0
@@ -47,7 +53,7 @@ func Summary(d client.ProductDossier, jsonPath, mdPath string) string {
 		Dim.Render(plural(n, "other thing shares this name", "other things share this name"))))
 	if collisions != nil {
 		for _, c := range *collisions {
-			sb.WriteString(row("", Accent.Render("›")+" "+Body.Render(c.Name)+"  "+Dim.Render(c.WhatItIs)))
+			sb.WriteString(rowW(w, "", Accent.Render("›")+" "+Body.Render(c.Name), Dim.Render(c.WhatItIs)))
 		}
 	}
 
@@ -68,9 +74,25 @@ func Summary(d client.ProductDossier, jsonPath, mdPath string) string {
 	}
 
 	sb.WriteString("\n  " + Rule(w) + "\n")
-	sb.WriteString("  " + Gradient("→", false) + " " + Body.Render(mdPath) + "\n")
-	sb.WriteString("    " + Dim.Render(jsonPath) + "\n")
+	sb.WriteString("  " + Spread(w,
+		Gradient("→", false)+" "+Body.Render(mdPath), Dim.Render("markdown")) + "\n")
+	sb.WriteString("  " + Spread(w,
+		Dim.Render("  "+jsonPath), Dim.Render("json")) + "\n")
 	return sb.String()
+}
+
+// rowW is row with a right-hand column pinned to the frame's right edge. When
+// the two columns cannot share a line the right one drops to its own row under
+// the gutter rather than being truncated away.
+func rowW(width int, key, value, right string) string {
+	line := strings.TrimSuffix(row(key, value), "\n")
+	if right == "" {
+		return line + "\n"
+	}
+	if lipgloss.Width(line)+lipgloss.Width(right)+2 > width {
+		return line + "\n" + row("", right)
+	}
+	return Spread(width+2, line, right) + "\n"
 }
 
 // row lays out one label/value line, wrapping the value under an empty gutter

@@ -5,12 +5,47 @@ package ui
 // primitives the progress view and the summary both build on.
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 	"github.com/lucasb-eyer/go-colorful"
 	"github.com/muesli/termenv"
 )
+
+// Layout. The CLI claims the whole terminal: every surface is drawn at the
+// window's own width, clamped only so a very narrow pane still lays out and a
+// very wide one does not stretch a seven-row list across a wall.
+const (
+	minWidth = 44
+	maxWidth = 120
+	margin   = 2
+)
+
+// Fit turns a raw terminal width into the frame width surfaces draw at.
+func Fit(cols int) int {
+	w := cols - 2*margin
+	if w > maxWidth {
+		w = maxWidth
+	}
+	// The floor never overshoots the window itself: on a pane narrower than
+	// minWidth, drawing wider would wrap every line.
+	if w < minWidth {
+		w = min(minWidth, max(cols, 1))
+	}
+	return w
+}
+
+// TermSize reports the terminal geometry for surfaces drawn outside bubbletea,
+// which never receive a WindowSizeMsg. Falls back to a conventional 80x24.
+func TermSize() (int, int) {
+	w, h, err := term.GetSize(os.Stdout.Fd())
+	if err != nil || w <= 0 {
+		return 80, 24
+	}
+	return w, h
+}
 
 // The brand ramp: violet through indigo into cyan. Every accent in the CLI is
 // sampled from this one curve, so unrelated surfaces still look related.
@@ -113,16 +148,32 @@ func Box(width int, lines ...string) string {
 	return sb.String()
 }
 
-// Banner is the wordmark that opens every run.
+// Banner is the wordmark that opens every run. It spans the frame, with the
+// wordmark on the left rail and the tagline pinned to the right one.
 func Banner(width int) string {
 	mark := Gradient("◆", true)
 	word := Gradient("F I E L D N O T E", true)
-	return Box(width,
-		"",
-		"  "+mark+"  "+word,
-		"     "+Dim.Render("product understanding")+" "+Accent.Render("·")+" "+Dim.Render("T0"),
-		"",
-	)
+	tag := Dim.Render("product understanding") + " " + Accent.Render("·") + " " + Dim.Render("T0")
+
+	inner := width - 2
+	left := "  " + mark + "  " + word
+	// Below this the tagline would collide with the wordmark, so it drops to
+	// its own line rather than being truncated.
+	if lipgloss.Width(left)+lipgloss.Width(tag)+4 > inner {
+		return Box(width, "", left, "  "+tag, "")
+	}
+	return Box(width, "", Spread(inner-2, left, tag)+" ", "")
+}
+
+// Spread lays a left and a right fragment against the two edges of a width,
+// filling the gap with spaces. Fragments are already-styled strings, so the
+// padding is measured with lipgloss.Width rather than len.
+func Spread(width int, left, right string) string {
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 // Meter renders a determinate gradient bar: filled cells sample the ramp at
@@ -157,7 +208,12 @@ func Pulse(width, frame int) string {
 	if width < 1 {
 		return ""
 	}
-	const band = 4
+	// The lit band scales with the bar so a wide terminal gets a sweep rather
+	// than a speck crossing a long track.
+	band := width / 6
+	if band < 3 {
+		band = 3
+	}
 	period := 2 * (width + band)
 	pos := frame % period
 	if pos >= width+band {

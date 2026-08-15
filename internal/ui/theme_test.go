@@ -84,3 +84,39 @@ func TestSpacedLetterSpacesAndFallsBack(t *testing.T) {
 		t.Errorf("spaced(empty) = %q, want UNKNOWN", got)
 	}
 }
+
+func TestFitStaysInsideTheWindow(t *testing.T) {
+	for _, cols := range []int{1, 20, 44, 80, 200, 400} {
+		got := Fit(cols)
+		if got > cols && cols > 0 {
+			t.Errorf("Fit(%d) = %d, wider than the window", cols, got)
+		}
+		if got > maxWidth {
+			t.Errorf("Fit(%d) = %d, above the cap", cols, got)
+		}
+		if got < 1 {
+			t.Errorf("Fit(%d) = %d, want at least 1", cols, got)
+		}
+	}
+}
+
+func TestSpreadFillsExactlyTheWidth(t *testing.T) {
+	if got := lipgloss.Width(Spread(30, "left", "right")); got != 30 {
+		t.Errorf("Spread width = %d, want 30", got)
+	}
+	// Overflowing fragments keep a single separating space rather than
+	// silently overlapping.
+	if got := Spread(4, "left", "right"); got != "left right" {
+		t.Errorf("Spread(overflow) = %q", got)
+	}
+}
+
+func TestBannerSpansTheFrameAtEveryWidth(t *testing.T) {
+	for _, w := range []int{minWidth, 60, 80, maxWidth} {
+		for i, ln := range strings.Split(Banner(w), "\n") {
+			if got := lipgloss.Width(ln); got != w {
+				t.Errorf("Banner(%d) line %d is %d wide", w, i, got)
+			}
+		}
+	}
+}

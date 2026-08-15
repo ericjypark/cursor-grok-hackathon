@@ -15,13 +15,22 @@ import (
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
 )
 
-// Layout constants. labelCol keeps every stage's trailing column aligned no
-// matter which label is longest.
-const (
-	frameWidth = 60
-	labelCol   = 26
-	barWidth   = 14
-)
+// labelCol keeps every stage's trailing column aligned no matter which label
+// is longest; the trailing column itself is right-aligned to the frame edge.
+const labelCol = 26
+
+// meterWidth scales the progress bars with the frame so a wide terminal gets a
+// wide bar instead of a stub floating in whitespace.
+func meterWidth(frame int) int {
+	w := frame / 3
+	if w < 10 {
+		w = 10
+	}
+	if w > 28 {
+		w = 28
+	}
+	return w
+}
 
 type stage struct {
 	key, label, detail, status string
@@ -54,7 +63,9 @@ type model struct {
 
 	frame   int
 	startAt time.Time
-	width   int
+	width   int // frame width content is drawn at
+	cols    int // full terminal width
+	rows    int // full terminal height
 }
 
 func newModel(events <-chan client.Event) model {
@@ -71,7 +82,16 @@ func newModel(events <-chan client.Event) model {
 	for i := range stages {
 		stages[i].status = "pending"
 	}
-	return model{stages: stages, spin: s, events: events, startAt: time.Now(), width: frameWidth}
+	cols, rows := TermSize()
+	return model{
+		stages:  stages,
+		spin:    s,
+		events:  events,
+		startAt: time.Now(),
+		cols:    cols,
+		rows:    rows,
+		width:   Fit(cols),
+	}
 }
 
 func waitFor(ch <-chan client.Event) tea.Cmd {
@@ -111,7 +131,8 @@ func (m *model) set(key, status, detail string) {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = min(frameWidth, max(32, msg.Width-4))
+		m.cols, m.rows = msg.Width, msg.Height
+		m.width = Fit(msg.Width)
 		return m, nil
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC || msg.String() == "q" {
@@ -182,72 +203,70 @@ func wave(frame int) float64 {
 
 func (m model) View() string {
 	var sb strings.Builder
-	sb.WriteString("\n" + indent(Banner(m.width)) + "\n\n")
+	sb.WriteString(Banner(m.width) + "\n\n")
 
 	done := 0
 	for _, s := range m.stages {
 		if s.status == "done" {
 			done++
 		}
-		sb.WriteString("   " + m.stageLine(s) + "\n")
+		sb.WriteString(" " + m.stageLine(s, m.width-2) + "\n")
 	}
 
-	sb.WriteString("\n  " + Rule(m.width) + "\n")
-	sb.WriteString("   " + Meter(barWidth, float64(done)/float64(len(m.stages))))
-	sb.WriteString("  " + Muted.Render(fmt.Sprintf("%d/%d", done, len(m.stages))))
-	sb.WriteString("  " + Dim.Render(clock(time.Since(m.startAt))) + "\n")
+	sb.WriteString("\n" + Rule(m.width) + "\n")
+
+	bar := Meter(meterWidth(m.width), float64(done)/float64(len(m.stages)))
+	status := " " + bar +
+		"  " + Title.Render(fmt.Sprintf("%d", done)) + Dim.Render(fmt.Sprintf("/%d", len(m.stages))) +
+		"  " + Dim.Render(clock(time.Since(m.startAt)))
+	sb.WriteString(Spread(m.width, status, Dim.Render("q")+" "+Dim.Render("cancel")))
 
 	for _, w := range m.warnings {
-		sb.WriteString("\n   " + Warn.Render("▲ "+w))
+		sb.WriteString("\n " + Warn.Render("▲ "+w))
 	}
 	if m.fatal != nil {
-		sb.WriteString("\n   " + Bad.Render("✗ "+m.fatal.Error()) + "\n")
+		sb.WriteString("\n " + Bad.Render("✗ "+m.fatal.Error()))
 	}
-	return sb.String() + "\n"
+
+	// Fixing the panel to its own width first keeps every line left-aligned
+	// inside it; Place then centres the panel as a block on the alt screen.
+	panel := lipgloss.NewStyle().Width(m.width).Render(sb.String())
+	return lipgloss.Place(m.cols, m.rows, lipgloss.Center, lipgloss.Center, panel)
 }
 
 // stageLine draws one row: status glyph, label, then a trailing column that is
 // a live pulse while running and a timing/detail readout once settled.
-func (m model) stageLine(s stage) string {
+func (m model) stageLine(s stage, width int) string {
 	var icon, label, trail string
 	switch s.status {
 	case "done":
 		icon, label = Good.Render("✔"), Body.Render(s.label)
-		trail = Dim.Render(dur(s.elapsed))
 		if s.detail != "" {
-			trail += "  " + Muted.Render(s.detail)
+			trail = Muted.Render(s.detail) + "  "
 		}
+		trail += Dim.Render(dur(s.elapsed))
 	case "running":
 		icon, label = m.spin.View(), Title.Render(s.label)
 		if s.detail != "" {
 			trail = Muted.Render(s.detail)
 		} else {
-			trail = Pulse(barWidth, m.frame)
+			trail = Pulse(meterWidth(width), m.frame)
 		}
 	case "failed":
 		icon, label = Warn.Render("▲"), Body.Render(s.label)
 		trail = Warn.Render("degraded")
 	default:
 		icon, label = Dim.Render("·"), Dim.Render(s.label)
+		trail = Dim.Render("queued")
 	}
 
-	line := icon + "  " + label
-	if trail == "" {
-		return line
+	left := icon + "  " + label
+	// Below the aligned label column the row would overlap, so the trailing
+	// readout is dropped rather than wrapped.
+	if width < labelCol+lipgloss.Width(trail)+4 {
+		return left
 	}
-	pad := labelCol - lipgloss.Width(s.label)
-	if pad < 1 {
-		pad = 1
-	}
-	return line + strings.Repeat(" ", pad) + trail
-}
-
-func indent(block string) string {
-	lines := strings.Split(block, "\n")
-	for i := range lines {
-		lines[i] = "  " + lines[i]
-	}
-	return strings.Join(lines, "\n")
+	return Spread(width, left, trail)
 }
 
 func dur(d time.Duration) string {
@@ -266,7 +285,8 @@ func clock(d time.Duration) string {
 
 // Run drives the progress display until the stream ends, returning the dossier.
 func Run(ctx context.Context, events <-chan client.Event) (client.ProductDossier, error) {
-	final, err := tea.NewProgram(newModel(events), tea.WithContext(ctx)).Run()
+	final, err := tea.NewProgram(newModel(events),
+		tea.WithContext(ctx), tea.WithAltScreen()).Run()
 	if err != nil {
 		return client.ProductDossier{}, err
 	}
