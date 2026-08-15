@@ -278,20 +278,30 @@ func (m model) View() string {
 		rows = m.stageRows(shown, false)
 	}
 
-	sep, listH := "\n", height(rows)
-	if m.rows-headH-listH-footH >= listH {
-		sep, listH = "\n\n", listH+len(rows)-1
+	// free is the blank-line budget between the three blocks. Spend it on the
+	// list's own spacing first and cap what is left over each outer gap: an
+	// all-or-nothing double-space left a window with almost enough slack
+	// looking like a rendering fault — two five-line canyons around a list
+	// still packed solid.
+	const outerGap = 2
+	free := m.rows - headH - height(rows) - footH
+	inner := 0
+	if free > 0 {
+		inner = min(max(free-2*outerGap, 0), len(rows)-1)
 	}
+	list := openGaps(rows, inner)
 
-	// free is the blank-line budget; splitting it above and below the list
-	// makes the header and footer land on the window's own first and last row.
+	// Whatever the list could not absorb splits above and below it, which is
+	// what lands the header and footer on the window's own first and last row.
+	// Measuring the spaced list rather than trusting inner keeps that split
+	// honest: the view has to come out exactly m.rows tall or it scrolls.
 	above, below := 0, 0
-	if free := m.rows - headH - listH - footH; free > 0 {
+	if free = m.rows - headH - lipgloss.Height(list) - footH; free > 0 {
 		above, below = free/2, free-free/2
 	}
 
 	body := head +
-		strings.Repeat("\n", above+1) + strings.Join(rows, sep) +
+		strings.Repeat("\n", above+1) + list +
 		strings.Repeat("\n", below+1) + foot.String()
 	return rail(body, m.width)
 }
@@ -302,6 +312,32 @@ func (m model) stageRows(stages []stage, withSubs bool) []string {
 		rows = append(rows, " "+m.stageLine(s, m.width-2, withSubs))
 	}
 	return rows
+}
+
+// openGaps joins the rows, opening extra of the gaps between them. The chosen
+// gaps are spaced on half-steps so a partial spend lands centred in the list
+// instead of packed against one end, where a single stray blank line reads as
+// a seam rather than as breathing room.
+func openGaps(rows []string, extra int) string {
+	gaps := len(rows) - 1
+	if gaps < 1 || extra < 1 {
+		return strings.Join(rows, "\n")
+	}
+	open := make(map[int]bool, extra)
+	for k := 0; k < extra; k++ {
+		open[(2*k+1)*gaps/(2*extra)+1] = true
+	}
+	var sb strings.Builder
+	for i, r := range rows {
+		if i > 0 {
+			sb.WriteString("\n")
+			if open[i] {
+				sb.WriteString("\n")
+			}
+		}
+		sb.WriteString(r)
+	}
+	return sb.String()
 }
 
 func height(rows []string) int {
@@ -379,16 +415,37 @@ func (m model) stageLine(s stage, width int, withSub bool) string {
 	case "running":
 		icon, label = m.spin.View(), Title.Render(s.label)
 		// The stopwatch runs off startedAt, so it ticks with the spinner
-		// rather than waiting on the backend to say something.
-		trail = Pulse(meterWidth(width), m.frame) + "  " + Dim.Render(stopwatch(m.since(s)))
+		// rather than waiting on the backend to say something. It is the one
+		// thing this row never gives up: a running stage with no elapsed time
+		// is indistinguishable from a hang, which is the whole reason the
+		// trailing column exists.
+		watch := Dim.Render(stopwatch(m.since(s)))
+		// room is what the trailing column may occupy without crowding the
+		// aligned label column — the same budget the guard below enforces.
+		room := width - labelCol - 4
+		trail = watch
 		switch {
 		case s.detail == "":
 		case withSub:
 			sub = Dim.Render("↳ ") + Muted.Render(s.detail)
 		default:
 			// No room for a second line: the note is worth more than the
-			// pulse, so it takes the trailing column back.
-			trail = Muted.Render(s.detail) + "  " + Dim.Render(stopwatch(m.since(s)))
+			// pulse, so it takes the trailing column back — clipped to what
+			// is left beside the clock. A note wider than the row used to
+			// blow the whole column past the guard and take the clock with
+			// it, leaving a row that said nothing at all.
+			if n := room - lipgloss.Width(watch) - 2; n > 0 {
+				if d := ansi.Truncate(s.detail, n, "…"); d != "" {
+					trail = Muted.Render(d) + "  " + watch
+				}
+			}
+		}
+		// The pulse is the first thing surrendered: it is decoration, so it
+		// only appears once the clock has a bar's width to spare beside it.
+		if s.detail == "" || withSub {
+			if bar := meterWidth(width); room >= bar+2+lipgloss.Width(watch) {
+				trail = Pulse(bar, m.frame) + "  " + watch
+			}
 		}
 	case "failed":
 		icon, label = Warn.Render("▲"), Body.Render(s.label)
@@ -399,10 +456,19 @@ func (m model) stageLine(s stage, width int, withSub bool) string {
 	}
 
 	left := icon + "  " + label
-	// Below the aligned label column the row would overlap, so the trailing
-	// readout is dropped rather than wrapped.
 	row := Spread(width, left, trail)
-	if width < labelCol+lipgloss.Width(trail)+4 {
+	switch {
+	case s.status == "running":
+		// The clock outranks the label's tail. A clipped label still reads as
+		// the stage it names; a running row with nothing after it reads as a
+		// hang, so this row clips the left rather than dropping the right.
+		if over := lipgloss.Width(left) + 2 + lipgloss.Width(trail) - width; over > 0 {
+			left = ansi.Truncate(left, max(lipgloss.Width(left)-over, 0), "…")
+			row = Spread(width, left, trail)
+		}
+	case width < labelCol+lipgloss.Width(trail)+4:
+		// Below the aligned label column the row would overlap, so the
+		// trailing readout is dropped rather than wrapped.
 		row = left
 	}
 	if sub != "" {

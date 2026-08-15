@@ -150,3 +150,114 @@ func TestShortWindowKeepsTheRunningStage(t *testing.T) {
 		t.Error("a short window dropped the stage that was actually working")
 	}
 }
+
+// A narrow window used to drop the running row's whole trailing column: the
+// note moved into it, made it too wide for the guard, and took the stopwatch
+// down with it. A running stage with no elapsed time reads as a hang, so the
+// clock is the one thing the row may never surrender.
+func TestRunningRowKeepsItsStopwatchOnNarrowWindows(t *testing.T) {
+	for _, cols := range []int{40, 48, 60, 72} {
+		m := newModel(nil, true)
+		m.cols, m.rows, m.width = cols, 18, Fit(cols)
+		m.set("search_collisions", "running", `searching "cursor" with no category context`)
+		m.stages[3].startedAt = time.Now().Add(-42 * time.Second)
+
+		row := stripANSI(m.stageLine(m.stages[3], m.width-2, false))
+		if !strings.Contains(row, "42.0s") {
+			t.Errorf("%d cols: running row lost its stopwatch: %q", cols, row)
+		}
+		if w := lipgloss.Width(row); w > m.width-2 {
+			t.Errorf("%d cols: running row is %d wide, past the frame's %d", cols, w, m.width-2)
+		}
+	}
+}
+
+// The note is clipped to what is left beside the clock rather than being
+// dropped outright — a partial note still says what the backend is on.
+func TestNarrowRunningRowTruncatesTheNoteRatherThanLosingIt(t *testing.T) {
+	m := newModel(nil, true)
+	m.cols, m.rows, m.width = 60, 18, Fit(60)
+	m.set("search_collisions", "running", `searching "cursor" with no category context`)
+	m.stages[3].startedAt = time.Now().Add(-42 * time.Second)
+
+	row := stripANSI(m.stageLine(m.stages[3], m.width-2, false))
+	if !strings.Contains(row, "…") {
+		t.Errorf("over-long note was not clipped: %q", row)
+	}
+	if !strings.Contains(row, `searching "curs`) {
+		t.Errorf("clipped note kept nothing readable: %q", row)
+	}
+}
+
+// Vertical slack goes into the list's own spacing before it opens gaps around
+// it: a 100x30 window once split ten spare lines into two five-line canyons
+// with a solid block of stages between them, which reads as a rendering fault.
+func TestSlackGoesIntoTheListBeforeTheOuterGaps(t *testing.T) {
+	m := newModel(nil, true)
+	m.cols, m.rows, m.width = 100, 30, Fit(100)
+	m.set("map", "done", "31 pages")
+	m.set("search_collisions", "running", "searching for collisions")
+
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	blank := func(i int) bool { return strings.TrimSpace(lines[i]) == "" }
+
+	first, last := 0, len(lines)-1
+	for first < len(lines) && !strings.Contains(lines[first], "Mapping the site") {
+		first++
+	}
+	for last >= 0 && !strings.Contains(lines[last], "Normalizing posts") {
+		last--
+	}
+	if first >= len(lines) || last < 0 {
+		t.Fatalf("could not find the stage list:\n%s", strings.Join(lines, "\n"))
+	}
+
+	above, below := 0, 0
+	for i := first - 1; i >= 0 && blank(i); i-- {
+		above++
+	}
+	for i := last + 1; i < len(lines) && blank(i); i++ {
+		below++
+	}
+	if above > 2 || below > 2 {
+		t.Errorf("outer gaps are %d above and %d below, want no more than 2 each:\n%s",
+			above, below, strings.Join(lines, "\n"))
+	}
+	inner := 0
+	for i := first; i <= last; i++ {
+		if blank(i) {
+			inner++
+		}
+	}
+	if inner == 0 {
+		t.Errorf("spare lines never reached the list's own spacing:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// The view owns the alternate screen at every size it can be given, not only
+// the handful the layout was tuned on.
+func TestViewNeverOutgrowsItsWindow(t *testing.T) {
+	for _, withT1 := range []bool{false, true} {
+		for cols := 40; cols <= 140; cols += 4 {
+			for rows := 10; rows <= 50; rows++ {
+				m := newModel(nil, withT1)
+				m.cols, m.rows, m.width = cols, rows, Fit(cols)
+				m.set("map", "done", "31 pages")
+				m.set("scrape_site", "failed", "")
+				m.set("search_collisions", "running", `searching "cursor" with no category context`)
+
+				lines := strings.Split(m.View(), "\n")
+				if len(lines) > rows {
+					t.Fatalf("t1=%v %dx%d: view is %d lines, past the window's %d",
+						withT1, cols, rows, len(lines), rows)
+				}
+				for i, ln := range lines {
+					if w := lipgloss.Width(ln); w > cols {
+						t.Fatalf("t1=%v %dx%d: line %d is %d wide, past the right edge",
+							withT1, cols, rows, i, w)
+					}
+				}
+			}
+		}
+	}
+}
