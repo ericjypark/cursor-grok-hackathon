@@ -38,7 +38,10 @@ func FormTheme() *huh.Theme {
 func FormHeader() string {
 	cols, _ := TermSize()
 	w := Fit(cols)
-	head := Gradient("◆", true) + "  " + Title.Render("fieldnote")
+	// The mark and the name carry the same ramp the banner will open with, so
+	// the first thing on screen already belongs to the same product as the
+	// last thing on it.
+	head := Gradient("◆", true) + "  " + Gradient("fieldnote", true)
 	return "\n  " + Spread(w, head, Dim.Render("tell us what to look at")) +
 		"\n  " + Rule(w) + "\n"
 }

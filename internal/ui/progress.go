@@ -36,7 +36,11 @@ func meterWidth(frame int) int {
 type stage struct {
 	key, label, detail, status string
 	startedAt                  time.Time
-	elapsed                    time.Duration
+	// settledAt is when the row stopped running. It exists only for the
+	// completion flash: a stage that flips from a sweeping bar to a tick with
+	// no moment in between is a change nobody in an audience catches.
+	settledAt time.Time
+	elapsed   time.Duration
 }
 
 // Display order, which is also roughly execution order.
@@ -74,6 +78,7 @@ type model struct {
 	quitting bool
 
 	frame   int
+	nextKey string // the queued stage nearest the front, the only one labelled
 	startAt time.Time
 	width   int // frame width content is drawn at
 	cols    int // full terminal width
@@ -135,6 +140,9 @@ func (m *model) set(key, status, detail string) {
 			s.startedAt = time.Now()
 		case status != "running" && !s.startedAt.IsZero() && s.elapsed == 0:
 			s.elapsed = time.Since(s.startedAt)
+		}
+		if settled(status) && !settled(s.status) {
+			s.settledAt = time.Now()
 		}
 		s.status = status
 		if detail != "" {
@@ -237,12 +245,20 @@ func wave(frame int) float64 {
 }
 
 func (m model) View() string {
-	head := Banner(m.width)
+	head := BannerAt(m.width, m.frame)
 
 	done := 0
 	for _, s := range m.stages {
 		if s.status == "done" {
 			done++
+		}
+	}
+	// Only the stage about to start is labelled, so the queue reads as one
+	// waiting list with a front rather than as six rows of "queued".
+	for _, s := range m.stages {
+		if s.status == "pending" {
+			m.nextKey = s.key
+			break
 		}
 	}
 
@@ -270,12 +286,23 @@ func (m model) View() string {
 	// window, and a view taller than its window scrolls the terminal and tears
 	// the frame apart.
 	budget := m.rows - headH - footH - 2
-	shown := fit(m.stages, budget)
-	rows := m.stageRows(shown, true)
+
+	// Phase headers are the one thing here that is pure hierarchy, so they are
+	// taken only out of slack: they appear when every stage row already fits
+	// with their own cost to spare, and never at the price of a stage.
+	cost := 2*len(phases(m.stages)) - 1
+	useHeads := budget >= len(m.stages)+cost
+	room := budget
+	if useHeads {
+		room -= cost
+	}
+
+	shown := fit(m.stages, room)
+	rows, glued := m.stageRows(shown, true, useHeads)
 	// Sub-lines are the first thing a short window gives up: dropping one
 	// costs a note, dropping a row costs a whole stage.
 	if height(rows) > budget {
-		rows = m.stageRows(shown, false)
+		rows, glued = m.stageRows(shown, false, useHeads)
 	}
 
 	// free is the blank-line budget between the three blocks. Spend it on the
@@ -289,7 +316,7 @@ func (m model) View() string {
 	if free > 0 {
 		inner = min(max(free-2*outerGap, 0), len(rows)-1)
 	}
-	list := openGaps(rows, inner)
+	list := openGaps(rows, inner, glued)
 
 	// Whatever the list could not absorb splits above and below it, which is
 	// what lands the header and footer on the window's own first and last row.
@@ -306,26 +333,108 @@ func (m model) View() string {
 	return rail(body, m.width)
 }
 
-func (m model) stageRows(stages []stage, withSubs bool) []string {
-	rows := make([]string, 0, len(stages))
+// stageRows draws one row per stage, optionally prefixed by the phase header
+// its group opens. It also reports which gaps are glued shut: a header and the
+// first row under it are one object, and a blank line driven between them
+// reads as a heading for nothing.
+func (m model) stageRows(stages []stage, withSubs, withHeads bool) (rows []string, glued []bool) {
+	open := -1
 	for _, s := range stages {
-		rows = append(rows, " "+m.stageLine(s, m.width-2, withSubs))
+		if withHeads {
+			if p := phaseOf(s); p != open {
+				head := m.phaseHeader(p, m.width-2)
+				if open >= 0 {
+					// The two phases are different work. One blank line is
+					// what says so even on a window with no slack to spend.
+					head = "\n" + head
+				}
+				open = p
+				rows, glued = append(rows, head), append(glued, false)
+				rows, glued = append(rows, " "+m.stageLine(s, m.width-2, withSubs)), append(glued, true)
+				continue
+			}
+		}
+		rows, glued = append(rows, " "+m.stageLine(s, m.width-2, withSubs)), append(glued, false)
 	}
-	return rows
+	return rows, glued
+}
+
+// The pipeline is two pieces of work, not eleven steps: T0 decides what the
+// product is, T1 goes and finds people complaining about it. Naming them is
+// what makes a four-minute wait legible to someone who has never seen the CLI.
+var phaseNames = [][2]string{
+	{"T0", "UNDERSTANDING THE PRODUCT"},
+	{"T1", "FINDING THE COMPLAINTS"},
+}
+
+func phaseOf(s stage) int {
+	for _, t := range t1Stages {
+		if t.key == s.key {
+			return 1
+		}
+	}
+	return 0
+}
+
+// phases reports which phases a stage plan actually contains, so a --no-scrape
+// run is not charged for a header it will never draw.
+func phases(stages []stage) []int {
+	seen := map[int]bool{}
+	out := []int{}
+	for _, s := range stages {
+		if p := phaseOf(s); !seen[p] {
+			seen[p], out = true, append(out, p)
+		}
+	}
+	return out
+}
+
+// phaseHeader is a rule with the phase's name on it and its own count on the
+// right. The rule is dim: it is a section marker, and a gradient here would
+// compete with the banner and the footer for the same eye.
+func (m model) phaseHeader(p, width int) string {
+	done, total := 0, 0
+	for _, s := range m.stages {
+		if phaseOf(s) != p {
+			continue
+		}
+		total++
+		if s.status == "done" {
+			done++
+		}
+	}
+	name := phaseNames[p]
+	left := lipgloss.NewStyle().Foreground(RampAt(float64(p))).Render("▌") +
+		" " + Muted.Render(name[0]) + "  " + Body.Render(name[1])
+	right := Title.Render(fmt.Sprintf("%d", done)) + Dim.Render(fmt.Sprintf("/%d", total))
+	fill := width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	if fill < 1 {
+		return ansi.Truncate(Spread(width, left, right), width, "")
+	}
+	return left + " " + Dim.Render(strings.Repeat("─", fill)) + " " + right
 }
 
 // openGaps joins the rows, opening extra of the gaps between them. The chosen
 // gaps are spaced on half-steps so a partial spend lands centred in the list
 // instead of packed against one end, where a single stray blank line reads as
 // a seam rather than as breathing room.
-func openGaps(rows []string, extra int) string {
+func openGaps(rows []string, extra int, glued []bool) string {
 	gaps := len(rows) - 1
 	if gaps < 1 || extra < 1 {
 		return strings.Join(rows, "\n")
 	}
 	open := make(map[int]bool, extra)
 	for k := 0; k < extra; k++ {
-		open[(2*k+1)*gaps/(2*extra)+1] = true
+		i := (2*k+1)*gaps/(2*extra) + 1
+		// Slide past gaps that are already open or glued shut rather than
+		// spending the line twice or splitting a phase off its first stage.
+		for i < len(rows) && (open[i] || (i < len(glued) && glued[i])) {
+			i++
+		}
+		if i >= len(rows) {
+			continue
+		}
+		open[i] = true
 	}
 	var sb strings.Builder
 	for i, r := range rows {
@@ -404,14 +513,42 @@ func rail(block string, width int) string {
 // scrapes are minutes long, and a row that only says "running" for that long
 // is indistinguishable from a hang.
 func (m model) stageLine(s stage, width int, withSub bool) string {
-	var icon, label, trail, sub string
+	// spare is what the trailing column falls back to when the full readout
+	// will not fit beside the aligned label column: for a finished stage the
+	// note is a nicety and the elapsed time is the record of the work, so the
+	// row gives up the note first and the clock only if it has to.
+	var icon, label, trail, sub, spare string
 	switch s.status {
 	case "done":
+		// The completion moment. A stage that swaps a sweeping bar for a tick
+		// between two frames is a change nobody watching from a room away
+		// catches, so a finished row holds a full gradient bar for half a
+		// second, then lands lit, then settles. The row never changes width
+		// while it does it.
+		lit := m.flash(s)
 		icon, label = Good.Render("✔"), Body.Render(s.label)
-		if s.detail != "" {
-			trail = Muted.Render(s.detail) + "  "
+		clk := Dim.Render(dur(s.elapsed))
+		if lit > 0 {
+			icon, label, clk = Title.Render("✔"), Title.Render(s.label), Muted.Render(dur(s.elapsed))
 		}
-		trail += Dim.Render(dur(s.elapsed))
+		spare = clk
+		if s.detail != "" && clk != "" {
+			trail = Muted.Render(s.detail) + "  "
+		} else if s.detail != "" {
+			trail = Muted.Render(s.detail)
+		}
+		trail += clk
+		if lit > 1 {
+			// The bar snaps full where the pulse was sweeping, on exactly the
+			// budget the pulse had to clear — so the fill lands in place
+			// rather than jumping to a different column.
+			if bar := meterWidth(width); width-labelCol-4 >= bar+2+lipgloss.Width(clk) {
+				trail = Meter(bar, 1)
+				if clk != "" {
+					trail += "  " + clk
+				}
+			}
+		}
 	case "running":
 		icon, label = m.spin.View(), Title.Render(s.label)
 		// The stopwatch runs off startedAt, so it ticks with the spinner
@@ -451,11 +588,18 @@ func (m model) stageLine(s stage, width int, withSub bool) string {
 		icon, label = Warn.Render("▲"), Body.Render(s.label)
 		trail = Warn.Render("degraded")
 	default:
+		// Six rows all reading "queued" is six rows of noise. The queue says
+		// what it is by being dim; only its front is worth a word.
 		icon, label = Dim.Render("·"), Dim.Render(s.label)
-		trail = Dim.Render("queued")
+		if s.key == m.nextKey {
+			icon, label, trail = Muted.Render("·"), Muted.Render(s.label), Dim.Render("next")
+		}
 	}
 
 	left := icon + "  " + label
+	if trail == "" {
+		return left
+	}
 	row := Spread(width, left, trail)
 	switch {
 	case s.status == "running":
@@ -468,13 +612,36 @@ func (m model) stageLine(s stage, width int, withSub bool) string {
 		}
 	case width < labelCol+lipgloss.Width(trail)+4:
 		// Below the aligned label column the row would overlap, so the
-		// trailing readout is dropped rather than wrapped.
+		// trailing readout gives way — to the shorter one it kept in reserve
+		// if there is one, and to nothing if even that will not fit.
 		row = left
+		if spare != "" && width >= labelCol+lipgloss.Width(spare)+4 {
+			row = Spread(width, left, spare)
+		}
 	}
 	if sub != "" {
 		row += "\n   " + sub
 	}
 	return row
+}
+
+// settled reports whether a status is one a stage stops moving in.
+func settled(status string) bool { return status == "done" || status == "failed" }
+
+// flash reports how far into the completion transition a settled row is: 2
+// while its bar holds full, 1 while the row is still lit, 0 once it has cooled
+// into the finished list. Driven off the clock rather than a frame count, so
+// the transition is the same length however the terminal is repainting.
+func (m model) flash(s stage) int {
+	switch d := time.Since(s.settledAt); {
+	case s.settledAt.IsZero():
+		return 0
+	case d < 450*time.Millisecond:
+		return 2
+	case d < 900*time.Millisecond:
+		return 1
+	}
+	return 0
 }
 
 // since reports how long a stage has been running, and nothing for a stage

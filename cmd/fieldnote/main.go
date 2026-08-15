@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ericjypark/cursor-grok-hackathon/internal/client"
 	"github.com/ericjypark/cursor-grok-hackathon/internal/input"
@@ -71,6 +72,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The run's own clock. Started here rather than inside the progress model
+	// so the quiet path can report the same number, and so it survives the
+	// TUI's teardown to reach the summary.
+	started := time.Now()
 	events, err := client.Stream(ctx, *backend, req)
 	if err != nil {
 		return err
@@ -100,7 +105,7 @@ func run() error {
 		fmt.Println(string(blob))
 		return nil
 	}
-	fmt.Print(ui.Summary(note, paths))
+	fmt.Print(ui.Summary(note, paths, time.Since(started)))
 	return nil
 }
 

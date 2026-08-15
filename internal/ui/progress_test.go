@@ -261,3 +261,116 @@ func TestViewNeverOutgrowsItsWindow(t *testing.T) {
 		}
 	}
 }
+
+// Eleven rows each reading "queued" is eleven rows of noise. Only the front of
+// the queue is worth a word.
+func TestOnlyTheNextQueuedStageIsLabelled(t *testing.T) {
+	m := newModel(nil, true)
+	m.cols, m.rows, m.width = 100, 40, Fit(100)
+	m.set("map", "done", "31 pages")
+	m.set("scrape_site", "running", "")
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "queued") {
+		t.Errorf("the queue is still shouting:\n%s", view)
+	}
+	if n := strings.Count(view, "next"); n != 1 {
+		t.Errorf("%d rows claim to be next, want exactly 1:\n%s", n, view)
+	}
+	// It is the first pending stage, not just any of them.
+	for _, ln := range strings.Split(view, "\n") {
+		if strings.Contains(ln, "next") && !strings.Contains(ln, "Reading the repository") {
+			t.Errorf("the wrong row is marked next: %q", ln)
+		}
+	}
+}
+
+// The completion flash swaps the row's trailing column for a full bar for half
+// a second. It runs on rows of every width, so it has to clear the same guard
+// the pulse does rather than pushing the row past the frame.
+func TestCompletionFlashNeverOutgrowsTheRow(t *testing.T) {
+	for cols := 40; cols <= 160; cols += 4 {
+		m := newModel(nil, true)
+		m.cols, m.rows, m.width = cols, 30, Fit(cols)
+		m.set("map", "done", "31 pages across 4 hosts, 2 of them redirects")
+		m.stages[0].elapsed = 4200 * time.Millisecond
+		for _, at := range []time.Duration{0, 600 * time.Millisecond, 2 * time.Second} {
+			m.stages[0].settledAt = time.Now().Add(-at)
+			row := m.stageLine(m.stages[0], m.width-2, true)
+			if w := lipgloss.Width(row); w > m.width-2 {
+				t.Errorf("%d cols, %s after settling: row is %d wide, past the frame's %d",
+					cols, at, w, m.width-2)
+			}
+			// The elapsed time is the row's payload once it is done; the flash
+			// may replace the note, never the clock.
+			if !strings.Contains(stripANSI(row), "4.2s") {
+				t.Errorf("%d cols, %s after settling: row lost its elapsed time: %q", cols, at, row)
+			}
+		}
+	}
+}
+
+// The flash is the whole point of settledAt: a stage that flips from a
+// sweeping bar to a tick between two frames is a change nobody watching from
+// across a room catches.
+func TestAFinishedStageHoldsAFullBarBeforeItSettles(t *testing.T) {
+	m := newModel(nil, true)
+	m.cols, m.rows, m.width = 120, 30, Fit(120)
+	m.set("map", "done", "31 pages")
+	m.stages[0].elapsed = 4200 * time.Millisecond
+
+	if !strings.Contains(m.stageLine(m.stages[0], m.width-2, true), "▰▰▰") {
+		t.Error("a stage that just finished did not flash a full bar")
+	}
+	m.stages[0].settledAt = time.Now().Add(-2 * time.Second)
+	settled := stripANSI(m.stageLine(m.stages[0], m.width-2, true))
+	if strings.Contains(settled, "▰") {
+		t.Errorf("the bar never collapsed back into the readout: %q", settled)
+	}
+	if !strings.Contains(settled, "31 pages") {
+		t.Errorf("the settled row lost its note: %q", settled)
+	}
+}
+
+// Phase headers are hierarchy, not information: they are worth a line only
+// while every stage still has one. A window that had to drop a stage row must
+// not be spending lines on headings.
+func TestPhaseHeadersAreNeverBoughtWithAStageRow(t *testing.T) {
+	for _, withT1 := range []bool{false, true} {
+		for cols := 40; cols <= 140; cols += 4 {
+			for rows := 10; rows <= 50; rows++ {
+				m := newModel(nil, withT1)
+				m.cols, m.rows, m.width = cols, rows, Fit(cols)
+				m.set("map", "done", "31 pages")
+				m.set("search_collisions", "running", "searching")
+
+				view := stripANSI(m.View())
+				if !strings.Contains(view, phaseNames[0][1]) {
+					continue
+				}
+				for _, s := range m.stages {
+					if !strings.Contains(view, s.label) {
+						t.Fatalf("t1=%v %dx%d: headers are on screen but %q is not:\n%s",
+							withT1, cols, rows, s.label, view)
+					}
+				}
+			}
+		}
+	}
+}
+
+// A header with its group's first row pushed a blank line below it reads as a
+// heading for nothing.
+func TestAPhaseHeaderStaysGluedToItsFirstStage(t *testing.T) {
+	m := newModel(nil, true)
+	m.cols, m.rows, m.width = 110, 34, Fit(110)
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	for i, ln := range lines {
+		if !strings.Contains(ln, phaseNames[0][1]) && !strings.Contains(ln, phaseNames[1][1]) {
+			continue
+		}
+		if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) == "" {
+			t.Errorf("a phase header was left hanging over a blank line:\n%s", strings.Join(lines, "\n"))
+		}
+	}
+}
