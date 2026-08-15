@@ -1,4 +1,4 @@
-// Package input collects and normalizes the three onboarding inputs.
+// Package input collects and normalizes the onboarding inputs.
 package input
 
 import (
@@ -59,17 +59,27 @@ func NormalizeRepo(s string) (string, error) {
 	return parts[0] + "/" + parts[1], nil
 }
 
-// ValidateWebsite is the form's inline check; the website is the one input we
-// genuinely cannot proceed without.
+// ValidateWebsite is the form's inline check. The website is optional, so an
+// empty value passes; anything present still has to look like a URL.
 func ValidateWebsite(s string) error {
 	if strings.TrimSpace(s) == "" {
-		return errors.New("website is required")
+		return nil
 	}
 	u, err := url.Parse(NormalizeWebsite(s))
 	if err != nil || u.Host == "" || !strings.Contains(u.Host, ".") {
 		return errors.New("that doesn't look like a URL")
 	}
 	return nil
+}
+
+// ValidateRepo is the form's inline check; the repo is the one input we
+// genuinely cannot proceed without.
+func ValidateRepo(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return errors.New("repo is required")
+	}
+	_, err := NormalizeRepo(s)
+	return err
 }
 
 // Slug derives a filesystem-safe directory name.
@@ -84,10 +94,18 @@ func Slug(name string) string {
 // Collect prompts only for what the flags left blank.
 func Collect(req client.Request) (client.Request, error) {
 	fields := []huh.Field{}
+	if req.Repo == "" {
+		fields = append(fields, huh.NewInput().
+			Title("GitHub repo").
+			Description("The one required input. owner/repo or a full URL.").
+			Placeholder("getcursor/cursor").
+			Value(&req.Repo).
+			Validate(ValidateRepo))
+	}
 	if req.Website == "" {
 		fields = append(fields, huh.NewInput().
 			Title("Product website").
-			Description("The one required input.").
+			Description("Optional.").
 			Placeholder("https://cursor.com").
 			Value(&req.Website).
 			Validate(ValidateWebsite))
@@ -95,16 +113,8 @@ func Collect(req client.Request) (client.Request, error) {
 	if req.Name == "" {
 		fields = append(fields, huh.NewInput().
 			Title("Product name").
-			Description("Optional — derived from the site if you skip it.").
+			Description("Optional — derived from the repo or site if you skip it.").
 			Value(&req.Name))
-	}
-	if req.Repo == "" {
-		fields = append(fields, huh.NewInput().
-			Title("GitHub repo").
-			Description("Optional. owner/repo or a full URL.").
-			Placeholder("getcursor/cursor").
-			Value(&req.Repo).
-			Validate(func(s string) error { _, err := NormalizeRepo(s); return err }))
 	}
 	if req.Form == "" {
 		fields = append(fields, huh.NewText().
@@ -129,5 +139,8 @@ func Collect(req client.Request) (client.Request, error) {
 	req.Repo = repo
 	req.Name = strings.TrimSpace(req.Name)
 	req.Form = strings.TrimSpace(req.Form)
-	return req, ValidateWebsite(req.Website)
+	if err := ValidateWebsite(req.Website); err != nil {
+		return req, err
+	}
+	return req, ValidateRepo(req.Repo)
 }

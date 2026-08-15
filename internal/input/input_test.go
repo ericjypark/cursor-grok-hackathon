@@ -49,14 +49,27 @@ func TestNormalizeRepoRejectsGarbage(t *testing.T) {
 }
 
 func TestValidateWebsite(t *testing.T) {
-	for _, ok := range []string{"acme.dev", "https://acme.dev/x"} {
+	for _, ok := range []string{"acme.dev", "https://acme.dev/x", "", "   "} {
 		if err := ValidateWebsite(ok); err != nil {
 			t.Errorf("ValidateWebsite(%q) = %v, want nil", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "   ", "localhost", "not a url"} {
+	for _, bad := range []string{"localhost", "not a url"} {
 		if err := ValidateWebsite(bad); err == nil {
 			t.Errorf("ValidateWebsite(%q) should have failed", bad)
+		}
+	}
+}
+
+func TestValidateRepo(t *testing.T) {
+	for _, ok := range []string{"owner/repo", "https://github.com/owner/repo.git"} {
+		if err := ValidateRepo(ok); err != nil {
+			t.Errorf("ValidateRepo(%q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "   ", "nope", "owner/"} {
+		if err := ValidateRepo(bad); err == nil {
+			t.Errorf("ValidateRepo(%q) should have failed", bad)
 		}
 	}
 }
