@@ -11,10 +11,14 @@ import (
 const (
 	ErrorEventStageFindSimilar      ErrorEventStage = "find_similar"
 	ErrorEventStageMap              ErrorEventStage = "map"
+	ErrorEventStageMapPosts         ErrorEventStage = "map_posts"
+	ErrorEventStageScrapeHackernews ErrorEventStage = "scrape_hackernews"
+	ErrorEventStageScrapeReddit     ErrorEventStage = "scrape_reddit"
 	ErrorEventStageScrapeRepo       ErrorEventStage = "scrape_repo"
 	ErrorEventStageScrapeSite       ErrorEventStage = "scrape_site"
 	ErrorEventStageSearchCollisions ErrorEventStage = "search_collisions"
 	ErrorEventStageSearchContext    ErrorEventStage = "search_context"
+	ErrorEventStageSelectSources    ErrorEventStage = "select_sources"
 	ErrorEventStageSynthesize       ErrorEventStage = "synthesize"
 )
 
@@ -25,6 +29,12 @@ func (e ErrorEventStage) Valid() bool {
 		return true
 	case ErrorEventStageMap:
 		return true
+	case ErrorEventStageMapPosts:
+		return true
+	case ErrorEventStageScrapeHackernews:
+		return true
+	case ErrorEventStageScrapeReddit:
+		return true
 	case ErrorEventStageScrapeRepo:
 		return true
 	case ErrorEventStageScrapeSite:
@@ -33,7 +43,33 @@ func (e ErrorEventStage) Valid() bool {
 		return true
 	case ErrorEventStageSearchContext:
 		return true
+	case ErrorEventStageSelectSources:
+		return true
 	case ErrorEventStageSynthesize:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PostSource.
+const (
+	Github     PostSource = "github"
+	Hackernews PostSource = "hackernews"
+	Reddit     PostSource = "reddit"
+	X          PostSource = "x"
+)
+
+// Valid indicates whether the value is a known member of the PostSource enum.
+func (e PostSource) Valid() bool {
+	switch e {
+	case Github:
+		return true
+	case Hackernews:
+		return true
+	case Reddit:
+		return true
+	case X:
 		return true
 	default:
 		return false
@@ -65,10 +101,14 @@ func (e SourceVia) Valid() bool {
 const (
 	StageEventStageFindSimilar      StageEventStage = "find_similar"
 	StageEventStageMap              StageEventStage = "map"
+	StageEventStageMapPosts         StageEventStage = "map_posts"
+	StageEventStageScrapeHackernews StageEventStage = "scrape_hackernews"
+	StageEventStageScrapeReddit     StageEventStage = "scrape_reddit"
 	StageEventStageScrapeRepo       StageEventStage = "scrape_repo"
 	StageEventStageScrapeSite       StageEventStage = "scrape_site"
 	StageEventStageSearchCollisions StageEventStage = "search_collisions"
 	StageEventStageSearchContext    StageEventStage = "search_context"
+	StageEventStageSelectSources    StageEventStage = "select_sources"
 	StageEventStageSynthesize       StageEventStage = "synthesize"
 )
 
@@ -79,6 +119,12 @@ func (e StageEventStage) Valid() bool {
 		return true
 	case StageEventStageMap:
 		return true
+	case StageEventStageMapPosts:
+		return true
+	case StageEventStageScrapeHackernews:
+		return true
+	case StageEventStageScrapeReddit:
+		return true
 	case StageEventStageScrapeRepo:
 		return true
 	case StageEventStageScrapeSite:
@@ -86,6 +132,8 @@ func (e StageEventStage) Valid() bool {
 	case StageEventStageSearchCollisions:
 		return true
 	case StageEventStageSearchContext:
+		return true
+	case StageEventStageSelectSources:
 		return true
 	case StageEventStageSynthesize:
 		return true
@@ -97,6 +145,7 @@ func (e StageEventStage) Valid() bool {
 // Defines values for StageEventStatus.
 const (
 	Done    StageEventStatus = "done"
+	Failed  StageEventStatus = "failed"
 	Running StageEventStatus = "running"
 )
 
@@ -104,6 +153,8 @@ const (
 func (e StageEventStatus) Valid() bool {
 	switch e {
 	case Done:
+		return true
+	case Failed:
 		return true
 	case Running:
 		return true
@@ -121,6 +172,13 @@ type Disambiguation struct {
 	PositiveSignals *[]string        `json:"positive_signals,omitempty"`
 }
 
+// DossierEvent T0 landed. Emitted before T1 starts so the CLI can render it during the
+// minutes the scrape takes, rather than holding a finished dossier back.
+type DossierEvent struct {
+	Dossier ProductDossier `json:"dossier"`
+	Event   *string        `json:"event,omitempty"`
+}
+
 // ErrorEvent defines model for ErrorEvent.
 type ErrorEvent struct {
 	Detail string           `json:"detail"`
@@ -131,6 +189,43 @@ type ErrorEvent struct {
 
 // ErrorEventStage defines model for ErrorEvent.Stage.
 type ErrorEventStage string
+
+// FieldNote Everything the run produced. Grows a field per stage as T2-T5 land.
+type FieldNote struct {
+	Dossier ProductDossier `json:"dossier"`
+	Harvest *Harvest       `json:"harvest,omitempty"`
+}
+
+// HackerNewsTargets defines model for HackerNewsTargets.
+type HackerNewsTargets struct {
+	SearchQueries *[]string `json:"search_queries,omitempty"`
+}
+
+// Harvest T1's result: the targets chosen, and what came back from them.
+type Harvest struct {
+	// Live True when posts came from a live scrape. False means the scraper was unreachable and fixtures were substituted.
+	Live          bool      `json:"live"`
+	MappingErrors *[]string `json:"mapping_errors,omitempty"`
+	Posts         *[]Post   `json:"posts,omitempty"`
+	SourceNote    string    `json:"source_note"`
+
+	// Targets T1's output: what to scrape, derived from the dossier's discriminator.
+	Targets ScrapeTargets `json:"targets"`
+}
+
+// HarvestEvent defines model for HarvestEvent.
+type HarvestEvent struct {
+	Event *string `json:"event,omitempty"`
+
+	// Harvest T1's result: the targets chosen, and what came back from them.
+	Harvest Harvest `json:"harvest"`
+}
+
+// HeartbeatEvent Keeps the connection and the UI alive across a multi-minute scrape.
+type HeartbeatEvent struct {
+	ElapsedMs int     `json:"elapsed_ms"`
+	Event     *string `json:"event,omitempty"`
+}
 
 // Identity defines model for Identity.
 type Identity struct {
@@ -162,6 +257,43 @@ type PackageRef struct {
 	Registry string `json:"registry"`
 }
 
+// Post One scraped discussion, normalized across platforms by scraping/mapper.py.
+//
+// This is the frozen contract T2 consumes. Field names match mapper.py's
+// output exactly — it is the producer, this is the schema for what it makes.
+type Post struct {
+	Author                *string        `json:"author,omitempty"`
+	Body                  *string        `json:"body,omitempty"`
+	Channel               *string        `json:"channel,omitempty"`
+	Comments              *[]PostComment `json:"comments,omitempty"`
+	CreatedAt             *string        `json:"created_at,omitempty"`
+	CreatedAtIsScrapeTime *bool          `json:"created_at_is_scrape_time,omitempty"`
+	Id                    string         `json:"id"`
+	Language              *string        `json:"language,omitempty"`
+	NumComments           *int           `json:"num_comments,omitempty"`
+	Relevance             *float32       `json:"relevance,omitempty"`
+	Score                 *int           `json:"score,omitempty"`
+	ScrapedAt             *string        `json:"scraped_at,omitempty"`
+	SearchQuery           *string        `json:"search_query,omitempty"`
+	Source                PostSource     `json:"source"`
+	SourceId              *string        `json:"source_id,omitempty"`
+	Title                 *string        `json:"title,omitempty"`
+	Url                   string         `json:"url"`
+}
+
+// PostSource defines model for Post.Source.
+type PostSource string
+
+// PostComment defines model for PostComment.
+type PostComment struct {
+	Author *string `json:"author,omitempty"`
+	Body   string  `json:"body"`
+	Depth  *int    `json:"depth,omitempty"`
+	IsOp   *bool   `json:"is_op,omitempty"`
+	Score  *int    `json:"score,omitempty"`
+	Url    *string `json:"url,omitempty"`
+}
+
 // ProductDossier defines model for ProductDossier.
 type ProductDossier struct {
 	// Disambiguation Draft plus the score we compute ourselves rather than ask for.
@@ -183,10 +315,37 @@ type Provenance struct {
 	Sources         *[]Source           `json:"sources,omitempty"`
 }
 
-// ResultEvent defines model for ResultEvent.
+// RedditTargets Where on Reddit this product is actually discussed.
+//
+// Subreddits alone miss most of it: in the reference scrape, 12 of 27 Reddit
+// signals came from site-wide search, in subreddits nobody would have listed
+// up front. So queries carry at least as much weight as subreddits.
+type RedditTargets struct {
+	SearchQueries *[]string `json:"search_queries,omitempty"`
+	Subreddits    *[]string `json:"subreddits,omitempty"`
+}
+
+// ResultEvent Terminal event. Always last, always exactly one.
 type ResultEvent struct {
-	Dossier ProductDossier `json:"dossier"`
-	Event   *string        `json:"event,omitempty"`
+	Event *string `json:"event,omitempty"`
+
+	// Note Everything the run produced. Grows a field per stage as T2-T5 land.
+	Note FieldNote `json:"note"`
+}
+
+// ScrapeTargets T1's output: what to scrape, derived from the dossier's discriminator.
+type ScrapeTargets struct {
+	Hackernews *HackerNewsTargets `json:"hackernews,omitempty"`
+
+	// Rationale Why these targets, in one or two sentences. Shown to the operator so a bad expansion is visible before budget is spent.
+	Rationale *string `json:"rationale,omitempty"`
+
+	// Reddit Where on Reddit this product is actually discussed.
+	//
+	// Subreddits alone miss most of it: in the reference scrape, 12 of 27 Reddit
+	// signals came from site-wide search, in subreddits nobody would have listed
+	// up front. So queries carry at least as much weight as subreddits.
+	Reddit *RedditTargets `json:"reddit,omitempty"`
 }
 
 // Source defines model for Source.

@@ -41,6 +41,7 @@ type stage struct {
 
 // Display order, which is also roughly execution order.
 var stageOrder = []stage{
+	// T0 — product understanding
 	{key: "map", label: "Mapping the site"},
 	{key: "scrape_site", label: "Reading key pages"},
 	{key: "scrape_repo", label: "Reading the repository"},
@@ -50,6 +51,15 @@ var stageOrder = []stage{
 	{key: "synthesize", label: "Synthesizing the dossier"},
 }
 
+// T1 — sources and scraping. Kept separate so a --stop-after t0 run does not
+// show four rows it will never reach, and a meter that can never fill.
+var t1Stages = []stage{
+	{key: "select_sources", label: "Choosing where to look"},
+	{key: "scrape_reddit", label: "Scraping Reddit"},
+	{key: "scrape_hackernews", label: "Scraping HackerNews"},
+	{key: "map_posts", label: "Normalizing posts"},
+}
+
 type eventMsg client.Event
 type closedMsg struct{}
 
@@ -57,7 +67,8 @@ type model struct {
 	stages   []stage
 	spin     spinner.Model
 	events   <-chan client.Event
-	result   *client.ProductDossier
+	dossier  *client.ProductDossier
+	result   *client.FieldNote
 	warnings []string
 	fatal    error
 	quitting bool
@@ -69,7 +80,7 @@ type model struct {
 	rows    int // full terminal height
 }
 
-func newModel(events <-chan client.Event) model {
+func newModel(events <-chan client.Event, withT1 bool) model {
 	s := spinner.New()
 	// Frames without the trailing space bubbles ships on Dot, so a running row
 	// occupies exactly the same width as a settled one and nothing jitters.
@@ -78,8 +89,12 @@ func newModel(events <-chan client.Event) model {
 		FPS:    time.Second / 12,
 	}
 
-	stages := make([]stage, len(stageOrder))
-	copy(stages, stageOrder)
+	planned := stageOrder
+	if withT1 {
+		planned = append(append([]stage{}, stageOrder...), t1Stages...)
+	}
+	stages := make([]stage, len(planned))
+	copy(stages, planned)
 	for i := range stages {
 		stages[i].status = "pending"
 	}
@@ -173,9 +188,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.warnings = append(m.warnings, fmt.Sprintf("%s: %s", label, e.Detail))
 			}
+		case "dossier":
+			// T0 is done but the run is not: T1 still has to scrape. Hold the
+			// dossier and keep rendering rather than tearing the UI down.
+			if d, err := ev.Dossier(); err == nil {
+				m.dossier = &d
+			}
+		case "harvest":
+			if h, err := ev.Harvest(); err == nil && !h.Live {
+				m.warnings = append(m.warnings, "scrape: "+h.SourceNote)
+			}
+		case "heartbeat":
+			// Nothing to draw. Its job is done by having arrived: it keeps the
+			// connection warm through the minutes Reddit takes.
 		case "result":
-			if d, err := ev.Result(); err == nil {
-				m.result = &d
+			if n, err := ev.Result(); err == nil {
+				m.result = &n
 			} else {
 				m.fatal = fmt.Errorf("malformed result event: %w", err)
 			}
@@ -183,6 +211,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, waitFor(m.events)
 	case closedMsg:
+		// A stream that died after T0 still has a usable dossier, so salvage it
+		// rather than throwing away a minute of finished work.
+		if m.result == nil && m.dossier != nil {
+			m.result = &client.FieldNote{Dossier: *m.dossier}
+			m.warnings = append(m.warnings, "backend closed the stream early — the dossier is complete, the scrape is not")
+		}
 		if m.result == nil && m.fatal == nil {
 			m.fatal = errors.New("backend closed the stream without returning a dossier")
 		}
@@ -206,12 +240,10 @@ func (m model) View() string {
 	head := Banner(m.width)
 
 	done := 0
-	rows := make([]string, 0, len(m.stages))
 	for _, s := range m.stages {
 		if s.status == "done" {
 			done++
 		}
-		rows = append(rows, " "+m.stageLine(s, m.width-2))
 	}
 
 	var foot strings.Builder
@@ -232,6 +264,17 @@ func (m model) View() string {
 	// stage list floating in the space between them. A tall window spends its
 	// slack double-spacing the list before it opens gaps around it.
 	headH, footH := lipgloss.Height(head), lipgloss.Height(foot.String())
+
+	// Two separator lines always sit between the three blocks, so the list can
+	// only have what is left after them. Eleven stages do not fit a short
+	// window, and a view taller than its window scrolls the terminal and tears
+	// the frame apart.
+	shown := fit(m.stages, m.rows-headH-footH-2)
+	rows := make([]string, 0, len(shown))
+	for _, s := range shown {
+		rows = append(rows, " "+m.stageLine(s, m.width-2))
+	}
+
 	sep, listH := "\n", len(rows)
 	if m.rows-headH-listH-footH >= listH {
 		sep, listH = "\n\n", 2*len(rows)-1
@@ -248,6 +291,32 @@ func (m model) View() string {
 		strings.Repeat("\n", above+1) + strings.Join(rows, sep) +
 		strings.Repeat("\n", below+1) + foot.String()
 	return rail(body, m.width)
+}
+
+// fit picks which stage rows to draw when the window cannot hold them all.
+// Finished stages go first — the footer already reports how many are done, and
+// what a watcher needs to see is the stage running now and the ones still
+// ahead of it. Past that, the tail is clipped.
+func fit(stages []stage, budget int) []stage {
+	if budget >= len(stages) {
+		return stages
+	}
+	if budget < 1 {
+		budget = 1
+	}
+	out := make([]stage, 0, budget)
+	drop := len(stages) - budget
+	for _, s := range stages {
+		if drop > 0 && s.status == "done" {
+			drop--
+			continue
+		}
+		out = append(out, s)
+	}
+	if len(out) > budget {
+		out = out[:budget]
+	}
+	return out
 }
 
 // rail insets every line by the side margin and clips it to the frame. The
@@ -311,22 +380,23 @@ func clock(d time.Duration) string {
 	return fmt.Sprintf("%02d:%02d", int(d.Minutes()), int(d.Seconds())%60)
 }
 
-// Run drives the progress display until the stream ends, returning the dossier.
-func Run(ctx context.Context, events <-chan client.Event) (client.ProductDossier, error) {
-	final, err := tea.NewProgram(newModel(events),
+// Run drives the progress display until the stream ends, returning everything
+// the run produced.
+func Run(ctx context.Context, events <-chan client.Event, withT1 bool) (client.FieldNote, error) {
+	final, err := tea.NewProgram(newModel(events, withT1),
 		tea.WithContext(ctx), tea.WithAltScreen()).Run()
 	if err != nil {
-		return client.ProductDossier{}, err
+		return client.FieldNote{}, err
 	}
 	m, ok := final.(model)
 	if !ok {
-		return client.ProductDossier{}, errors.New("unexpected terminal model")
+		return client.FieldNote{}, errors.New("unexpected terminal model")
 	}
 	if m.fatal != nil {
-		return client.ProductDossier{}, m.fatal
+		return client.FieldNote{}, m.fatal
 	}
 	if m.result == nil {
-		return client.ProductDossier{}, errors.New("no dossier was produced")
+		return client.FieldNote{}, errors.New("no dossier was produced")
 	}
 	return *m.result, nil
 }

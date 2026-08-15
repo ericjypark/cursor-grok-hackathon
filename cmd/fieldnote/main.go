@@ -27,17 +27,21 @@ func main() {
 
 func run() error {
 	var (
-		url     = flag.String("url", "", "product website (required)")
-		name    = flag.String("name", "", "product name (optional; derived from the site if omitted)")
-		repo    = flag.String("repo", "", "GitHub repo as owner/repo or a full URL (optional)")
-		details = flag.String("details", "", "free-text detail form (optional)")
-		backend = flag.String("backend", envOr("FIELDNOTE_BACKEND", "http://127.0.0.1:8000"), "backend base URL")
-		asJSON  = flag.Bool("json", false, "print the dossier as JSON and skip the interactive UI")
-		outDir  = flag.String("out", "out", "directory to write results into")
+		url      = flag.String("url", "", "product website (required)")
+		name     = flag.String("name", "", "product name (optional; derived from the site if omitted)")
+		repo     = flag.String("repo", "", "GitHub repo as owner/repo or a full URL (optional)")
+		details  = flag.String("details", "", "free-text detail form (optional)")
+		backend  = flag.String("backend", envOr("FIELDNOTE_BACKEND", "http://127.0.0.1:8000"), "backend base URL")
+		asJSON   = flag.Bool("json", false, "print the results as JSON and skip the interactive UI")
+		outDir   = flag.String("out", "out", "directory to write results into")
+		noScrape = flag.Bool("no-scrape", false, "stop after T0: build the dossier but do not scrape")
 	)
 	flag.Parse()
 
 	req := client.Request{Website: *url, Name: *name, Repo: *repo, Form: *details}
+	if *noScrape {
+		req.StopAfter = "t0"
+	}
 
 	// Prompting and the animated UI both need a terminal. Piped or redirected
 	// output falls back to the quiet path rather than failing inside the TUI.
@@ -69,38 +73,38 @@ func run() error {
 		return err
 	}
 
-	var dossier client.ProductDossier
+	var note client.FieldNote
 	if interactive {
-		dossier, err = ui.Run(ctx, events)
+		note, err = ui.Run(ctx, events, !*noScrape)
 	} else {
-		dossier, err = consumeQuietly(events)
+		note, err = consumeQuietly(events)
 	}
 	if err != nil {
 		return err
 	}
 
-	slug := dossier.Identity.Slug
+	slug := note.Dossier.Identity.Slug
 	if slug == "" {
-		slug = input.Slug(dossier.Identity.CanonicalName)
+		slug = input.Slug(note.Dossier.Identity.CanonicalName)
 	}
-	jsonPath, mdPath, err := output.Write(*outDir, slug, dossier)
+	paths, err := output.Write(*outDir, slug, note)
 	if err != nil {
 		return err
 	}
 
 	if *asJSON {
-		blob, _ := json.MarshalIndent(dossier, "", "  ")
+		blob, _ := json.MarshalIndent(note, "", "  ")
 		fmt.Println(string(blob))
 		return nil
 	}
-	fmt.Print(ui.Summary(dossier, jsonPath, mdPath))
+	fmt.Print(ui.Summary(note, paths))
 	return nil
 }
 
 // consumeQuietly drains the stream without a TUI, reporting progress on stderr
 // so stdout stays clean for the JSON payload.
-func consumeQuietly(events <-chan client.Event) (client.ProductDossier, error) {
-	var dossier client.ProductDossier
+func consumeQuietly(events <-chan client.Event) (client.FieldNote, error) {
+	var note client.FieldNote
 	found := false
 	for ev := range events {
 		switch ev.Kind {
@@ -118,21 +122,21 @@ func consumeQuietly(events <-chan client.Event) (client.ProductDossier, error) {
 				continue
 			}
 			if e.Fatal != nil && *e.Fatal {
-				return dossier, fmt.Errorf("%s", e.Detail)
+				return note, fmt.Errorf("%s", e.Detail)
 			}
 			fmt.Fprintf(os.Stderr, "! %s\n", e.Detail)
 		case "result":
-			d, err := ev.Result()
+			n, err := ev.Result()
 			if err != nil {
-				return dossier, fmt.Errorf("malformed result event: %w", err)
+				return note, fmt.Errorf("malformed result event: %w", err)
 			}
-			dossier, found = d, true
+			note, found = n, true
 		}
 	}
 	if !found {
-		return dossier, fmt.Errorf("backend closed the stream without returning a dossier")
+		return note, fmt.Errorf("backend closed the stream without returning a dossier")
 	}
-	return dossier, nil
+	return note, nil
 }
 
 // isTTY reports whether stdout is a terminal rather than a pipe or file.

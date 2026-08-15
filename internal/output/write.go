@@ -1,4 +1,4 @@
-// Package output persists the dossier for review and for downstream stages.
+// Package output persists a run's results for review and for downstream stages.
 package output
 
 import (
@@ -11,26 +11,48 @@ import (
 	"github.com/ericjypark/cursor-grok-hackathon/internal/render"
 )
 
-// Write emits product.json (consumed by T1/T2) and product.md (for a human to
-// sanity-check before any scrape budget is spent).
-func Write(baseDir, slug string, d client.ProductDossier) (jsonPath, mdPath string, err error) {
+// Paths reports where a run's artifacts landed.
+type Paths struct {
+	JSON  string // product.json — the dossier T2 consumes
+	MD    string // product.md   — the same, for a human to sanity-check
+	Posts string // posts.json   — T1's scraped posts; empty when T1 did not run
+}
+
+// Write emits the dossier as product.json and product.md, plus posts.json when
+// the run got as far as scraping. The three files are written separately rather
+// than as one blob because each has a different reader: T2 reads posts.json, a
+// human reads product.md, and T1 reads product.json.
+func Write(baseDir, slug string, note client.FieldNote) (Paths, error) {
+	var out Paths
 	dir := filepath.Join(baseDir, slug)
-	if err = os.MkdirAll(dir, 0o755); err != nil {
-		return "", "", fmt.Errorf("cannot create %s: %w", dir, err)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return out, fmt.Errorf("cannot create %s: %w", dir, err)
 	}
 
-	blob, err := json.MarshalIndent(d, "", "  ")
+	blob, err := json.MarshalIndent(note.Dossier, "", "  ")
 	if err != nil {
-		return "", "", fmt.Errorf("cannot encode dossier: %w", err)
+		return out, fmt.Errorf("cannot encode dossier: %w", err)
 	}
-	jsonPath = filepath.Join(dir, "product.json")
-	if err = os.WriteFile(jsonPath, append(blob, '\n'), 0o644); err != nil {
-		return "", "", err
+	out.JSON = filepath.Join(dir, "product.json")
+	if err = os.WriteFile(out.JSON, append(blob, '\n'), 0o644); err != nil {
+		return out, err
 	}
 
-	mdPath = filepath.Join(dir, "product.md")
-	if err = os.WriteFile(mdPath, []byte(render.Markdown(d)), 0o644); err != nil {
-		return "", "", err
+	out.MD = filepath.Join(dir, "product.md")
+	if err = os.WriteFile(out.MD, []byte(render.Markdown(note.Dossier)), 0o644); err != nil {
+		return out, err
 	}
-	return jsonPath, mdPath, nil
+
+	if note.Harvest == nil {
+		return out, nil
+	}
+	posts, err := json.MarshalIndent(note.Harvest, "", "  ")
+	if err != nil {
+		return out, fmt.Errorf("cannot encode harvest: %w", err)
+	}
+	out.Posts = filepath.Join(dir, "posts.json")
+	if err = os.WriteFile(out.Posts, append(posts, '\n'), 0o644); err != nil {
+		return out, err
+	}
+	return out, nil
 }

@@ -19,6 +19,8 @@ type Request struct {
 	Name    string `json:"name,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	Form    string `json:"form,omitempty"`
+	// StopAfter is "t0" to skip scraping, "" to run the whole pipeline.
+	StopAfter string `json:"stop_after,omitempty"`
 }
 
 // Event is one decoded server-sent event.
@@ -37,17 +39,36 @@ func (e Event) Err() (ErrorEvent, error) {
 	return v, json.Unmarshal(e.Data, &v)
 }
 
-func (e Event) Result() (ProductDossier, error) {
-	var v ResultEvent
+// Dossier decodes the T0 event, published as soon as T0 lands so the UI has
+// something to show during the minutes T1 spends scraping.
+func (e Event) Dossier() (ProductDossier, error) {
+	var v DossierEvent
 	if err := json.Unmarshal(e.Data, &v); err != nil {
 		return ProductDossier{}, err
 	}
 	return v.Dossier, nil
 }
 
-// A finished dossier runs well past bufio's 64KB default line limit, so the
-// scanner gets a much larger ceiling.
-const maxEventBytes = 8 << 20
+func (e Event) Harvest() (Harvest, error) {
+	var v HarvestEvent
+	if err := json.Unmarshal(e.Data, &v); err != nil {
+		return Harvest{}, err
+	}
+	return v.Harvest, nil
+}
+
+// Result decodes the terminal event: everything the run produced.
+func (e Event) Result() (FieldNote, error) {
+	var v ResultEvent
+	if err := json.Unmarshal(e.Data, &v); err != nil {
+		return FieldNote{}, err
+	}
+	return v.Note, nil
+}
+
+// A result event carries the dossier plus every scraped post and its comment
+// threads, which runs far past bufio's 64KB default line limit.
+const maxEventBytes = 32 << 20
 
 // Parse decodes an SSE stream, invoking fn once per event. Pure: no network,
 // which is what makes it testable.
@@ -104,7 +125,7 @@ func Stream(ctx context.Context, baseURL string, req Request) (<-chan Event, err
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := (&http.Client{Timeout: 10 * time.Minute}).Do(httpReq)
+	resp, err := (&http.Client{Timeout: 20 * time.Minute}).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach backend at %s: %w", baseURL, err)
 	}

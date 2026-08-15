@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 #
-# One command to get T0 running: starts the backend, builds the CLI, runs it.
+# One command to get a run going: starts the backend, builds the CLI, runs it.
 #
 #   ./run.sh                                  # prompts for the inputs
 #   ./run.sh --url https://cursor.com         # or pass them straight through
 #   ./run.sh --demo                           # canned dossier, no API keys needed
+#   ./run.sh --url ... --no-scrape            # T0 only, skip the scrape
 #
 # Any flag other than --demo is forwarded to the CLI verbatim.
+#
+# T1 scrapes through the social-signals service (FIELDNOTE_SCRAPER, default
+# 127.0.0.1:8899). It is optional: with no scraper reachable the run falls back
+# to recorded signals and says so. Recorded signals are about Perplexity, so
+# that fallback is for proving the plumbing, not for reading real feedback.
 
 set -euo pipefail
 
@@ -15,6 +21,7 @@ BACKEND_DIR="${FIELDNOTE_BACKEND_DIR:-$(dirname "$HERE")/field-note-backend}"
 BACKEND_REPO="${FIELDNOTE_BACKEND_REPO:-in-sol-ence/field-note-backend}"
 PORT="${FIELDNOTE_PORT:-8000}"
 BASE="http://127.0.0.1:${PORT}"
+SCRAPER="${FIELDNOTE_SCRAPER:-http://127.0.0.1:8899}"
 
 # ---- house style ---------------------------------------------------------
 # The launcher wears the same violet-to-cyan ramp as the CLI it starts. Color
@@ -184,6 +191,22 @@ else
   done
   curl -sf "$BASE/health" >/dev/null 2>&1 || { tail -20 "$LOG" >&2; die "backend never became healthy"; }
 fi
+
+# ---- scraper -------------------------------------------------------------
+# Reported before the run rather than discovered halfway through it: a scrape
+# that silently returns recorded Perplexity posts is the single most
+# misleading thing this pipeline can do.
+case " ${CLI_ARGS[*]-} " in
+  *" --no-scrape "*) ;;
+  *)
+    if curl -sf "$SCRAPER/health" >/dev/null 2>&1; then
+      step "Scraper is up at $SCRAPER — T1 will scrape live"
+    else
+      printf '  %s▲ no scraper at %s%s %s· T1 falls back to recorded Perplexity signals%s\n' \
+        "$yellow" "$SCRAPER" "$off" "$dim" "$off"
+    fi
+    ;;
+esac
 
 # ---- CLI -----------------------------------------------------------------
 step "Building the CLI"
