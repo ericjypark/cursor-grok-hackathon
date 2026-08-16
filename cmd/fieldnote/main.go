@@ -28,20 +28,25 @@ func main() {
 
 func run() error {
 	var (
-		url      = flag.String("url", "", "product website (optional)")
-		name     = flag.String("name", "", "product name (optional; derived from the repo or site if omitted)")
-		repo     = flag.String("repo", "", "GitHub repo as owner/repo or a full URL (required)")
-		details  = flag.String("details", "", "free-text detail form (optional)")
-		backend  = flag.String("backend", envOr("FIELDNOTE_BACKEND", "http://127.0.0.1:8000"), "backend base URL")
-		asJSON   = flag.Bool("json", false, "print the results as JSON and skip the interactive UI")
-		outDir   = flag.String("out", "out", "directory to write results into")
-		noScrape = flag.Bool("no-scrape", false, "stop after T0: build the dossier but do not scrape")
+		url           = flag.String("url", "", "product website (optional)")
+		name          = flag.String("name", "", "product name (optional; derived from the repo or site if omitted)")
+		repo          = flag.String("repo", "", "GitHub repo as owner/repo or a full URL (required)")
+		details       = flag.String("details", "", "free-text detail form (optional)")
+		backend       = flag.String("backend", envOr("FIELDNOTE_BACKEND", "http://127.0.0.1:8000"), "backend base URL")
+		asJSON        = flag.Bool("json", false, "print the results as JSON and skip the interactive UI")
+		outDir        = flag.String("out", "out", "directory to write results into")
+		noScrape      = flag.Bool("no-scrape", false, "stop after T0: build the dossier but do not scrape")
+		scrapeX       = flag.Bool("scrape-x", true, "live X via x-scraper (Playwright); use -scrape-x=false to disable")
+		scrapeSocial  = flag.Bool("scrape-social", true, "Reddit/HN via social-signals; use -scrape-social=false to disable")
 	)
 	flag.Parse()
 
 	req := client.Request{Website: *url, Name: *name, Repo: *repo, Form: *details}
 	if *noScrape {
 		req.StopAfter = "t0"
+	} else {
+		req.ScrapeX = scrapeX
+		req.ScrapeSocial = scrapeSocial
 	}
 
 	// Prompting and the animated UI both need a terminal. Piped or redirected
