@@ -16,6 +16,7 @@ const (
 	ErrorEventStageMapPosts         ErrorEventStage = "map_posts"
 	ErrorEventStageScrapeHackernews ErrorEventStage = "scrape_hackernews"
 	ErrorEventStageScrapeReddit     ErrorEventStage = "scrape_reddit"
+	ErrorEventStageScrapeX          ErrorEventStage = "scrape_x"
 	ErrorEventStageScrapeRepo       ErrorEventStage = "scrape_repo"
 	ErrorEventStageScrapeSite       ErrorEventStage = "scrape_site"
 	ErrorEventStageSearchCollisions ErrorEventStage = "search_collisions"
@@ -40,6 +41,8 @@ func (e ErrorEventStage) Valid() bool {
 	case ErrorEventStageScrapeHackernews:
 		return true
 	case ErrorEventStageScrapeReddit:
+		return true
+	case ErrorEventStageScrapeX:
 		return true
 	case ErrorEventStageScrapeRepo:
 		return true
@@ -112,6 +115,7 @@ const (
 	StageEventStageMapPosts         StageEventStage = "map_posts"
 	StageEventStageScrapeHackernews StageEventStage = "scrape_hackernews"
 	StageEventStageScrapeReddit     StageEventStage = "scrape_reddit"
+	StageEventStageScrapeX          StageEventStage = "scrape_x"
 	StageEventStageScrapeRepo       StageEventStage = "scrape_repo"
 	StageEventStageScrapeSite       StageEventStage = "scrape_site"
 	StageEventStageSearchCollisions StageEventStage = "search_collisions"
@@ -136,6 +140,8 @@ func (e StageEventStage) Valid() bool {
 	case StageEventStageScrapeHackernews:
 		return true
 	case StageEventStageScrapeReddit:
+		return true
+	case StageEventStageScrapeX:
 		return true
 	case StageEventStageScrapeRepo:
 		return true

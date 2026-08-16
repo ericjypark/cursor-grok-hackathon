@@ -61,6 +61,7 @@ var t1Stages = []stage{
 	{key: "select_sources", label: "Choosing where to look"},
 	{key: "scrape_reddit", label: "Scraping Reddit"},
 	{key: "scrape_hackernews", label: "Scraping HackerNews"},
+	{key: "scrape_x", label: "Scraping X"},
 	{key: "map_posts", label: "Normalizing posts"},
 }
 

@@ -67,6 +67,26 @@ betting it on three external services staying up:
 `--demo` always returns the same Cursor dossier whatever you pass it. Every
 other flag is forwarded to the CLI untouched.
 
+### Fully live (real T0 dossier + live T1 scrapes)
+
+T1 can already be live under `--demo`. To also synthesize a **real** dossier
+(Firecrawl + Exa + Grok), drop `--demo` and put keys in the backend `.env`:
+
+```bash
+cd ../field-note-backend && cp .env.example .env
+# fill XAI_API_KEY, FIRECRAWL_API_KEY, EXA_API_KEY
+
+# Reddit/HN (run.sh will try to start this if :8899 is down)
+../field-note-backend/scripts/run_social_signals_lite.sh
+
+FIELDNOTE_BACKEND_DIR=../field-note-backend FIELDNOTE_PORT=8001 \
+  ./run.sh --repo getcursor/cursor --url https://cursor.com
+```
+
+Expect `/health` → `"mode":"live"`, and `out/<slug>/posts.json` →
+`"source_note": "live scrape"`. Team checklist (ops pitfalls, fixture rules,
+Chromium ordering): `field-note-backend/notes-gregory.md` §11.
+
 Override the defaults with `FIELDNOTE_BACKEND_DIR` (defaults to a sibling
 `field-note-backend`), `FIELDNOTE_PORT` (defaults to 8000) and
 `FIELDNOTE_SCRAPER` (defaults to `http://127.0.0.1:8899`). `run.sh` probes the
@@ -95,6 +115,8 @@ With the backend already up (see its README):
 | `--json` | Print the results to stdout and skip the interactive UI. |
 | `--out` | Output directory. Defaults to `out`. |
 | `--no-scrape` | Stop after T0. Builds the dossier, skips T1 entirely. |
+| `--scrape-x` | Live X via x-scraper (default true). Use `-scrape-x=false` to disable. |
+| `--scrape-social` | Reddit/HN via social-signals (default true). Use `-scrape-social=false` to disable. |
 
 Output lands in `out/<slug>/`:
 

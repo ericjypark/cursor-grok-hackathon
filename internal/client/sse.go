@@ -23,6 +23,10 @@ type Request struct {
 	Form    string `json:"form,omitempty"`
 	// StopAfter is "t0" to skip scraping, "" to run the whole pipeline.
 	StopAfter string `json:"stop_after,omitempty"`
+	// ScrapeX: live X via local x-scraper. Pointer so omitempty works; nil = backend default (true).
+	ScrapeX *bool `json:"scrape_x,omitempty"`
+	// ScrapeSocial: Reddit/HN via social-signals. nil = backend default (true).
+	ScrapeSocial *bool `json:"scrape_social,omitempty"`
 }
 
 // Event is one decoded server-sent event.
