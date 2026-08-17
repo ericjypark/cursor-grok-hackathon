@@ -32,13 +32,31 @@ subreddits and search queries — spending the collisions, the negative signals
 and the no-namesake jargon — then scrapes them and returns the discussions as
 normalized posts.
 
-The scrape runs through the social-signals service, which needs a live browser
-session and takes 3-5 minutes for Reddit. When it is not reachable, the run
-falls back to recorded signals and **says so**: the summary marks the posts
-`recorded` instead of `live`. Those recordings are about Perplexity, so a
-fallback run proves the plumbing — it does not tell you about your users.
+The scrape can hit **X** and **Reddit/HN**. Both paths in this hackathon stack
+are temporary stand-ins — see **Scrape backends (temporary)** below. When
+social-signals is not reachable, the run falls back to recorded signals and
+**says so**: the summary marks the posts `recorded` instead of `live`. Those
+recordings are about Perplexity, so a fallback run proves the plumbing — it
+does not tell you about your users.
 
 Skip the scrape entirely with `--no-scrape`.
+
+### Scrape backends (temporary)
+
+**X (`~/x-scraper`, `--scrape-x`).** The Playwright x-scraper checkout is a
+**puppet hack** for demos: it drives a browser instead of calling the official
+X API. Treat it as disposable. Durable live X needs a **real X API key** (and
+a proper API client), not this scraper. Use `FIELDNOTE_X_SCRAPER` /
+`X_SCRAPER_ROOT` only while you still need the puppet.
+
+**Reddit/HN (`:8899`, `--scrape-social`).** The private **social-signals**
+service is the real target. When it was missing we shipped
+`social_signals_lite` in field-note-backend
+(`scripts/run_social_signals_lite.sh`) — a compatible `:8899` stand-in
+(HN Algolia + Reddit Playwright). **Replace lite with the real social-signals
+service from the private repo** as soon as you have access; do not treat lite
+as the long-term scraper. `FIELDNOTE_SCRAPER` defaults to
+`http://127.0.0.1:8899` either way.
 
 ## Quick start
 
