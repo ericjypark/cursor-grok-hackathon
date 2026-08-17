@@ -9,10 +9,11 @@
 #
 # Any flag other than --demo is forwarded to the CLI verbatim.
 #
-# T1 scrapes through the social-signals service (FIELDNOTE_SCRAPER, default
-# 127.0.0.1:8899). It is optional: with no scraper reachable the run falls back
-# to recorded signals and says so. Recorded signals are about Perplexity, so
-# that fallback is for proving the plumbing, not for reading real feedback.
+# T1 scrapes through one or both backends (Go flags --scrape-x / --scrape-social):
+#   x-scraper  — local Playwright checkout (FIELDNOTE_X_SCRAPER / ~/x-scraper)
+#   social-signals — HTTP service (FIELDNOTE_SCRAPER, default 127.0.0.1:8899)
+# Either can be off; missing social-signals falls back to recorded Perplexity
+# fixtures. Missing x-scraper degrades that platform without fixtures.
 
 set -euo pipefail
 
@@ -22,6 +23,13 @@ BACKEND_REPO="${FIELDNOTE_BACKEND_REPO:-in-sol-ence/field-note-backend}"
 PORT="${FIELDNOTE_PORT:-8000}"
 BASE="http://127.0.0.1:${PORT}"
 SCRAPER="${FIELDNOTE_SCRAPER:-http://127.0.0.1:8899}"
+X_SCRAPER_ROOT="${FIELDNOTE_X_SCRAPER:-${X_SCRAPER_ROOT:-$HOME/x-scraper}}"
+if [ ! -f "$X_SCRAPER_ROOT/main.py" ] && [ -f "$(dirname "$BACKEND_DIR")/x-scraper/main.py" ]; then
+  X_SCRAPER_ROOT="$(dirname "$BACKEND_DIR")/x-scraper"
+fi
+if [ ! -f "$X_SCRAPER_ROOT/main.py" ] && [ -f "$BACKEND_DIR/x-scraper/main.py" ]; then
+  X_SCRAPER_ROOT="$BACKEND_DIR/x-scraper"
+fi
 
 # ---- house style ---------------------------------------------------------
 # The launcher wears the same violet-to-cyan ramp as the CLI it starts. Color
@@ -176,9 +184,11 @@ else
   # injecting dummies here silently overrides the user's real credentials.
   if [ "$DEMO" -eq 1 ]; then
     ( cd "$BACKEND_DIR" && exec env FIRECRAWL_API_KEY=x EXA_API_KEY=x XAI_API_KEY=x \
+        X_SCRAPER_ROOT="${X_SCRAPER_ROOT:-}" \
         uv run uvicorn "$APP" --port "$PORT" ) > "$LOG" 2>&1 &
   else
-    ( cd "$BACKEND_DIR" && exec uv run uvicorn "$APP" --port "$PORT" ) > "$LOG" 2>&1 &
+    ( cd "$BACKEND_DIR" && exec env X_SCRAPER_ROOT="${X_SCRAPER_ROOT:-}" \
+        uv run uvicorn "$APP" --port "$PORT" ) > "$LOG" 2>&1 &
   fi
   SERVER_PID=$!
   STARTED_SERVER=1
@@ -192,18 +202,44 @@ else
   curl -sf "$BASE/health" >/dev/null 2>&1 || { tail -20 "$LOG" >&2; die "backend never became healthy"; }
 fi
 
-# ---- scraper -------------------------------------------------------------
-# Reported before the run rather than discovered halfway through it: a scrape
-# that silently returns recorded Perplexity posts is the single most
-# misleading thing this pipeline can do.
+# ---- scrapers ------------------------------------------------------------
+# Reported before the run rather than discovered halfway through it.
 case " ${CLI_ARGS[*]-} " in
   *" --no-scrape "*) ;;
   *)
-    if curl -sf "$SCRAPER/health" >/dev/null 2>&1; then
-      step "Scraper is up at $SCRAPER — T1 will scrape live"
-    else
-      printf '  %s▲ no scraper at %s%s %s· T1 falls back to recorded Perplexity signals%s\n' \
-        "$yellow" "$SCRAPER" "$off" "$dim" "$off"
+    WANT_X=1
+    WANT_SOCIAL=1
+    case " ${CLI_ARGS[*]-} " in
+      *" -scrape-x=false "*|*" --scrape-x=false "*) WANT_X=0 ;;
+    esac
+    case " ${CLI_ARGS[*]-} " in
+      *" -scrape-social=false "*|*" --scrape-social=false "*) WANT_SOCIAL=0 ;;
+    esac
+
+    if [ "$WANT_X" -eq 1 ]; then
+      if [ -f "$X_SCRAPER_ROOT/main.py" ]; then
+        step "x-scraper ready at $X_SCRAPER_ROOT — live X enabled"
+        export X_SCRAPER_ROOT
+      else
+        printf '  %s▲ no x-scraper at %s%s %s· set FIELDNOTE_X_SCRAPER or clone ~/x-scraper%s\n' \
+          "$yellow" "$X_SCRAPER_ROOT" "$off" "$dim" "$off"
+      fi
+    fi
+    if [ "$WANT_SOCIAL" -eq 1 ]; then
+      if curl -sf "$SCRAPER/health" >/dev/null 2>&1; then
+        step "social-signals up at $SCRAPER — live Reddit/HN enabled"
+      elif [ -x "$BACKEND_DIR/scripts/run_social_signals_lite.sh" ]; then
+        step "starting social-signals-lite at $SCRAPER"
+        if "$BACKEND_DIR/scripts/run_social_signals_lite.sh" >/dev/null; then
+          step "social-signals-lite up at $SCRAPER — live Reddit/HN enabled"
+        else
+          printf '  %s▲ social-signals-lite failed to start%s %s· Reddit/HN fall back to recorded Perplexity signals%s\n' \
+            "$yellow" "$off" "$dim" "$off"
+        fi
+      else
+        printf '  %s▲ no social-signals at %s%s %s· Reddit/HN fall back to recorded Perplexity signals%s\n' \
+          "$yellow" "$SCRAPER" "$off" "$dim" "$off"
+      fi
     fi
     ;;
 esac
@@ -216,6 +252,12 @@ printf '  %s\n' "$(rule)"
 set +e
 # bash 3.2 (the macOS default) treats an empty array under `set -u` as an
 # unbound variable, so the expansion is guarded rather than written plainly.
+# Pass X_SCRAPER_ROOT into the backend process environment when we started it.
+if [ "$STARTED_SERVER" -eq 1 ] && [ -n "${X_SCRAPER_ROOT:-}" ]; then
+  # Backend already running in background — export for this CLI only helps
+  # if the server inherited env at start. Re-export is documented for reuse.
+  :
+fi
 "$HERE/fieldnote" --backend "$BASE" ${CLI_ARGS[@]+"${CLI_ARGS[@]}"}
 STATUS=$?
 set -e

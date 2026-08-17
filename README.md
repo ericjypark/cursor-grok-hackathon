@@ -32,13 +32,31 @@ subreddits and search queries — spending the collisions, the negative signals
 and the no-namesake jargon — then scrapes them and returns the discussions as
 normalized posts.
 
-The scrape runs through the social-signals service, which needs a live browser
-session and takes 3-5 minutes for Reddit. When it is not reachable, the run
-falls back to recorded signals and **says so**: the summary marks the posts
-`recorded` instead of `live`. Those recordings are about Perplexity, so a
-fallback run proves the plumbing — it does not tell you about your users.
+The scrape can hit **X** and **Reddit/HN**. Both paths in this hackathon stack
+are temporary stand-ins — see **Scrape backends (temporary)** below. When
+social-signals is not reachable, the run falls back to recorded signals and
+**says so**: the summary marks the posts `recorded` instead of `live`. Those
+recordings are about Perplexity, so a fallback run proves the plumbing — it
+does not tell you about your users.
 
 Skip the scrape entirely with `--no-scrape`.
+
+### Scrape backends (temporary)
+
+**X (`~/x-scraper`, `--scrape-x`).** The Playwright x-scraper checkout is a
+**puppet hack** for demos: it drives a browser instead of calling the official
+X API. Treat it as disposable. Durable live X needs a **real X API key** (and
+a proper API client), not this scraper. Use `FIELDNOTE_X_SCRAPER` /
+`X_SCRAPER_ROOT` only while you still need the puppet.
+
+**Reddit/HN (`:8899`, `--scrape-social`).** The private **social-signals**
+service is the real target. When it was missing we shipped
+`social_signals_lite` in field-note-backend
+(`scripts/run_social_signals_lite.sh`) — a compatible `:8899` stand-in
+(HN Algolia + Reddit Playwright). **Replace lite with the real social-signals
+service from the private repo** as soon as you have access; do not treat lite
+as the long-term scraper. `FIELDNOTE_SCRAPER` defaults to
+`http://127.0.0.1:8899` either way.
 
 ## Quick start
 
@@ -66,6 +84,26 @@ betting it on three external services staying up:
 
 `--demo` always returns the same Cursor dossier whatever you pass it. Every
 other flag is forwarded to the CLI untouched.
+
+### Fully live (real T0 dossier + live T1 scrapes)
+
+T1 can already be live under `--demo`. To also synthesize a **real** dossier
+(Firecrawl + Exa + Grok), drop `--demo` and put keys in the backend `.env`:
+
+```bash
+cd ../field-note-backend && cp .env.example .env
+# fill XAI_API_KEY, FIRECRAWL_API_KEY, EXA_API_KEY
+
+# Reddit/HN (run.sh will try to start this if :8899 is down)
+../field-note-backend/scripts/run_social_signals_lite.sh
+
+FIELDNOTE_BACKEND_DIR=../field-note-backend FIELDNOTE_PORT=8001 \
+  ./run.sh --repo getcursor/cursor --url https://cursor.com
+```
+
+Expect `/health` → `"mode":"live"`, and `out/<slug>/posts.json` →
+`"source_note": "live scrape"`. Team checklist (ops pitfalls, fixture rules,
+Chromium ordering): `field-note-backend/notes-gregory.md` §11.
 
 Override the defaults with `FIELDNOTE_BACKEND_DIR` (defaults to a sibling
 `field-note-backend`), `FIELDNOTE_PORT` (defaults to 8000) and
@@ -95,6 +133,8 @@ With the backend already up (see its README):
 | `--json` | Print the results to stdout and skip the interactive UI. |
 | `--out` | Output directory. Defaults to `out`. |
 | `--no-scrape` | Stop after T0. Builds the dossier, skips T1 entirely. |
+| `--scrape-x` | Live X via x-scraper (default true). Use `-scrape-x=false` to disable. |
+| `--scrape-social` | Reddit/HN via social-signals (default true). Use `-scrape-social=false` to disable. |
 
 Output lands in `out/<slug>/`:
 
